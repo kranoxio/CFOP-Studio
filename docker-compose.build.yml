@@ -1,0 +1,9 @@
+# Alternative: Image direkt auf dem NAS aus dem Git-Repo bauen
+services:
+  cfop-studio:
+    build: .
+    image: cfop-studio:local
+    container_name: cfop-studio
+    restart: unless-stopped
+    ports:
+      - "8085:80"
