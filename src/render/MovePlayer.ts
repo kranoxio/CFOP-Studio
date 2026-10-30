@@ -3,6 +3,19 @@ import { applyMove, isRotation, solvedState, type Move, type State } from '../cu
 export const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 export const easeOutSnap = (t: number) => 1 - Math.pow(1 - t, 3.2);
 
+/**
+ * Kubische Hermite-Kurve von 0 nach 1 mit Start-/Endsteigung s0/s1.
+ * s = 0: aus dem Stand bzw. bis zum Stillstand; s ≈ 0.8: fliessender Übergang zum Nachbarzug.
+ */
+export function hermite(t: number, s0: number, s1: number) {
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return (t3 - 2 * t2 + t) * s0 + (3 * t2 - 2 * t3) + (t3 - t2) * s1;
+}
+
+/** Steigung an verketteten Zuggrenzen */
+const CHAIN = 0.8;
+
 /** Relative Dauer eines Zuges (Doppelzüge dauern etwas länger, wie beim echten Würfel). */
 export function moveWeight(m: Move) {
   if (isRotation(m)) return m.amount === 2 ? 1.5 : 1.15;
@@ -33,7 +46,12 @@ export class MovePlayer {
   stopAt: number | null = null;
   onIndex: ((index: number) => void) | null = null;
   onFinish: (() => void) | null = null;
-  ease: (t: number) => number = easeInOut;
+  /** Optional: an diesem Index hält die Wiedergabe an (z.B. Schrittgrenze) – dort wird abgebremst */
+  isBoundary: ((index: number) => boolean) | null = null;
+  /** Fliessende Übergänge zwischen aufeinanderfolgenden Zügen */
+  fluid = true;
+  private startSlope = 0;
+  private endSlope = 0;
 
   load(base: State, moves: Move[], index = 0) {
     this.moves = moves;
@@ -95,6 +113,8 @@ export class MovePlayer {
     this.playing = false;
     this.reverse = false;
     this.stopAt = this.index + 1;
+    this.startSlope = 0;
+    this.endSlope = 0;
     this.progress = 0.0001;
   }
 
@@ -105,6 +125,8 @@ export class MovePlayer {
     this.playing = false;
     this.index--;
     this.reverse = true;
+    this.startSlope = 0;
+    this.endSlope = 0;
     this.progress = 0.9999;
     this.onIndex?.(this.index);
   }
@@ -133,6 +155,8 @@ export class MovePlayer {
     const wantsMove = this.progress > 0 || (this.playing && !this.finished);
     if (!wantsMove) return;
     let remaining = dt;
+    let chained = this.carryChain;
+    this.carryChain = false;
     while (remaining > 0 && !this.finished) {
       if (this.progress === 0) {
         if (!this.playing) break;
@@ -143,6 +167,7 @@ export class MovePlayer {
         }
       }
       const m = this.moves[this.index];
+      if (this.progress === 0) this.beginMove(chained);
       const need = ((1 - this.progress) * moveWeight(m)) / this.tps;
       if (remaining < need) {
         this.progress += (remaining * this.tps) / moveWeight(m);
@@ -150,6 +175,7 @@ export class MovePlayer {
       } else {
         remaining -= need;
         this.progress = 0;
+        chained = this.endSlope > 0;
         this.index++;
         this.onIndex?.(this.index);
         if (this.stopAt !== null && this.index >= this.stopAt) {
@@ -160,15 +186,32 @@ export class MovePlayer {
         // Restzeit fliesst in den nächsten Zug, damit die Gesamtdauer exakt stimmt
       }
     }
+    // Endete der Zug genau am Frame-Ende, beginnt der nächste im nächsten Frame verkettet
+    if (this.progress === 0 && this.playing) this.carryChain = chained;
     if (this.finished && this.playing) {
       this.playing = false;
       this.onFinish?.();
     }
   }
 
+  private carryChain = false;
+
+  /** Legt fest, ob der Zug aus der Bewegung startet und ob er fliessend in den nächsten übergeht. */
+  private beginMove(fromChain: boolean) {
+    const next = this.index + 1;
+    const continues =
+      this.fluid &&
+      this.playing &&
+      next < this.moves.length &&
+      (this.stopAt === null || next < this.stopAt) &&
+      !this.isBoundary?.(next);
+    this.startSlope = this.fluid && fromChain ? CHAIN : 0;
+    this.endSlope = continues ? CHAIN : 0;
+  }
+
   frame(): PlayerFrame {
     if (this.progress > 0 && this.index < this.moves.length) {
-      return { state: this.states[this.index], move: this.moves[this.index], progress: this.ease(this.progress) };
+      return { state: this.states[this.index], move: this.moves[this.index], progress: hermite(this.progress, this.startSlope, this.endSlope) };
     }
     return { state: this.states[this.index], move: null, progress: 0 };
   }

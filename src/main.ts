@@ -7,7 +7,10 @@ import { h } from './ui/dom';
 import { SolverView } from './ui/solverView';
 import { warmupSolver } from './solver/client';
 import { perf } from './render/perf';
-import { settings, saveSettings } from './settings';
+import { settings } from './settings';
+import { smartCube } from './smartcube/smartcube';
+import { openSettings } from './ui/settingsPanel';
+import { applyAppearance } from './ui/theme';
 
 type TabId = 'solver' | 'algs' | 'trainer' | 'timer';
 interface View {
@@ -81,23 +84,20 @@ const makeNav = (cls: string) =>
   );
 
 const perfHost = h('div', { class: 'perf-host' });
-const perfBtn = h('button', {
-  class: `icon-btn perf-toggle ${settings.showPerf ? 'active' : ''}`,
-  title: 'Leistungsanzeige (FPS)',
-  'aria-label': 'Leistungsanzeige',
-  onclick: () => {
-    settings.showPerf = !settings.showPerf;
-    saveSettings();
-    perf.setVisible(settings.showPerf, perfHost);
-    perfBtn.classList.toggle('active', settings.showPerf);
-  },
-}, '⚡');
 perf.setVisible(settings.showPerf, perfHost);
+const cubeChip = h('button', { class: 'cube-chip', title: 'Smartcube', onclick: () => openSettings() });
+const renderCubeChip = () => {
+  cubeChip.className = `cube-chip ${smartCube.connected ? 'on' : ''}`;
+  cubeChip.textContent = smartCube.connected ? `🔵 ${smartCube.isSimulator ? 'Simulator' : smartCube.name}${smartCube.battery !== null ? ` · ${smartCube.battery}%` : ''}` : '';
+};
+smartCube.onStatus(renderCubeChip);
+renderCubeChip();
+const settingsBtn = h('button', { class: 'icon-btn settings-btn', title: 'Einstellungen', 'aria-label': 'Einstellungen', onclick: () => openSettings() }, '⚙');
 
 const viewsEl = h('main', { class: 'views' }, solver.el);
 const app = document.getElementById('app')!;
 app.append(
-  h('header', { class: 'topbar' }, h('div', { class: 'logo' }, h('span', { class: 'logo-cube' }), h('span', null, 'CFOP ', h('b', null, 'Studio'))), makeNav('top-nav'), h('div', { class: 'topbar-right' }, perfHost, perfBtn)),
+  h('header', { class: 'topbar' }, h('div', { class: 'logo' }, h('span', { class: 'logo-cube' }), h('span', null, 'CFOP ', h('b', null, 'Studio'))), makeNav('top-nav'), h('div', { class: 'topbar-right' }, perfHost, cubeChip, settingsBtn)),
   viewsEl,
   makeNav('bottom-nav'),
 );
@@ -117,11 +117,16 @@ document.addEventListener('train-case', async (e) => {
   view.train((e as CustomEvent<string>).detail);
   show('trainer');
 });
+document.addEventListener('show-reconstruction', (e) => {
+  show('solver');
+  solver.loadReconstruction((e as CustomEvent<import('./ui/timerView').Solve>).detail);
+});
 document.addEventListener('show-scramble', (e) => {
   show('solver');
   solver.loadScramble(parseAlg((e as CustomEvent<string>).detail));
 });
 
+applyAppearance();
 warmupSolver();
 show('solver');
 

@@ -35,3 +35,17 @@ describe('CFOP-Solver', () => {
     }, 120000);
   }
 });
+
+describe('CFOP-Solver mit OH-Algs', () => {
+  it('löst zufällige Scrambles mit dem OH-Set', async () => {
+    const { setAlgStyle } = await import('../src/algs/registry');
+    setAlgStyle('oh');
+    const r = rng(99);
+    for (let i = 0; i < 40; i++) {
+      const start = applyMoves(applyMoves(solvedState(), parseAlg('z2')), randomScramble(21, r));
+      const sol = solveCFOP(start, { f2lMode: 'alg' });
+      expect(isSolved(applyMoves(start, sol.steps.flatMap((s) => s.moves)))).toBe(true);
+    }
+    setAlgStyle('2h');
+  });
+});

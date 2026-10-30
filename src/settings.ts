@@ -13,6 +13,14 @@ export interface Settings {
   gridTps: number;
   inspection: boolean;
   showPerf: boolean;
+  theme: 'system' | 'dark' | 'light';
+  /** 2H = normale Algs, OH = einhändige Algs (OLL/PLL) */
+  algStyle: '2h' | 'oh';
+  /** Daumen-Layout für die Bedienung mit einer Hand */
+  oneHand: 'off' | 'left' | 'right';
+  lookaheadTps: number;
+  crossGoal: 'cross' | 'xcross';
+  crossInspection: boolean;
 }
 
 const DEFAULTS: Settings = {
@@ -28,10 +36,17 @@ const DEFAULTS: Settings = {
   gridTps: 3,
   inspection: false,
   showPerf: false,
+  theme: 'system',
+  algStyle: '2h',
+  oneHand: 'off',
+  lookaheadTps: 2.5,
+  crossGoal: 'cross',
+  crossInspection: true,
 };
 
 export const settings: Settings = { ...DEFAULTS, ...storage.get<Partial<Settings>>('settings', {}) };
 
 export function saveSettings() {
   storage.set('settings', settings);
+  document.dispatchEvent(new CustomEvent('settings-change'));
 }

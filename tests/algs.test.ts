@@ -93,3 +93,18 @@ describe('PLL', () => {
     });
   }
 });
+
+describe('OH-Algs', () => {
+  it('alle OH-Algs lösen ihren Fall', async () => {
+    const { OH_ALGS } = await import('../src/algs/oh');
+    const { CASE_BY_ID } = await import('../src/algs/data');
+    const bad: string[] = [];
+    for (const [id, algs] of Object.entries(OH_ALGS)) {
+      const c = CASE_BY_ID.get(id);
+      if (!c) bad.push(`${id}: unbekannter Fall`);
+      else for (const a of algs) if (!validateAlg(c, a).ok) bad.push(`${id}: ${a}`);
+    }
+    expect(bad).toEqual([]);
+    expect(Object.keys(OH_ALGS).length).toBe(78);
+  });
+});

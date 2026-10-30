@@ -12,6 +12,7 @@
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",
     "@fontsource/jetbrains-mono": "^5.3.0",
+    "gan-web-bluetooth": "^3.0.2",
     "three": "^0.187.0"
   },
   "devDependencies": {

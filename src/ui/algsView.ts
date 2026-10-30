@@ -1,7 +1,7 @@
 import { moveToString, type Move } from '../cube/cube';
 import { htm } from '../cube/notation';
 import { ALL_CASES, type AlgCase, type AlgSet } from '../algs/data';
-import { caseState, getCustomAlg, normalizeAlg, preferredAlg, setCustomAlg, validateAlg } from '../algs/registry';
+import { algStyle, caseState, getCustomAlg, normalizeAlg, preferredAlg, setCustomAlg, styleAlgs, validateAlg } from '../algs/registry';
 import { GridRenderer } from '../render/GridRenderer';
 import { CubeView } from '../render/CubeView';
 import { lookFor } from './looks';
@@ -93,6 +93,7 @@ export class AlgsView {
       ),
       this.scroll,
     );
+    document.addEventListener('alg-style-change', () => this.grid && this.renderGrid());
     progress.subscribe(() => {
       this.renderTabs();
       this.refreshBadges();
@@ -153,7 +154,7 @@ export class AlgsView {
       if (this.filter === 'fav' && !progress.isFav(c.id)) return false;
       if (['new', 'learning', 'learned'].includes(this.filter) && progress.status(c.id) !== this.filter) return false;
       if (this.query) {
-        const hay = `${c.set} ${c.key} ${c.name ?? ''} ${c.group} ${c.algs.join(' ')}`.toLowerCase();
+        const hay = `${c.set} ${c.key} ${c.name ?? ''} ${c.group} ${styleAlgs(c).join(' ')}`.toLowerCase();
         if (!hay.includes(this.query)) return false;
       }
       return true;
@@ -266,7 +267,8 @@ export class AlgsView {
     const renderAlgList = () => {
       clear(algList);
       const custom = getCustomAlg(c.id);
-      const options = [...c.algs, ...(custom && !c.algs.includes(custom) ? [custom] : [])];
+      const base = styleAlgs(c);
+      const options = [...base, ...(custom && !base.includes(custom) ? [custom] : [])];
       for (const a of options) {
         const mine = preferredAlg(c) === a;
         algList.append(
@@ -287,7 +289,7 @@ export class AlgsView {
               class: `chip-btn small ${mine ? 'active' : ''}`,
               title: 'Diesen Alg im Solver und Trainer verwenden',
               onclick: () => {
-                setCustomAlg(c.id, a === c.algs[0] ? null : a);
+                setCustomAlg(c.id, a === styleAlgs(c)[0] ? null : a);
                 renderAlgList();
                 this.renderGrid();
                 toast('Gespeichert – der Solver nutzt jetzt diesen Alg');
@@ -350,7 +352,7 @@ export class AlgsView {
           { class: 'detail-right' },
           diagram,
           h('div', { class: 'btn-row' }, favBtn, statusSel),
-          h('h4', null, 'Algorithmen'),
+          h('h4', null, algStyle() === 'oh' && c.set !== 'F2L' ? 'Algorithmen (OH)' : 'Algorithmen'),
           algList,
           h('h4', null, 'Eigener Alg'),
           h(

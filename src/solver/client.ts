@@ -1,28 +1,32 @@
 import type { State } from '../cube/cube';
-import { getCustomAlgs } from '../algs/registry';
-import { solveCFOP, type Solution, type SolveOptions } from './cfop';
-import type { WorkerRequest } from './worker';
+import { algStyle, getCustomAlgs } from '../algs/registry';
+import { optimalCross, optimalXCross, slotCosts, solveCFOP, type Solution, type SolveOptions } from './cfop';
+import type { WorkerApi, WorkerRequest } from './worker';
 
-interface Result {
-  solution: Solution;
-  /** reine Rechenzeit in ms */
-  ms: number;
-}
+type Fn = keyof WorkerApi;
+type Result<F extends Fn> = { result: ReturnType<WorkerApi[F]>; ms: number };
 
 let worker: Worker | null = null;
 let nextId = 1;
-const pending = new Map<number, { resolve: (r: Result) => void; reject: (e: Error) => void }>();
+const pending = new Map<number, { resolve: (r: { result: unknown; ms: number }) => void; reject: (e: Error) => void }>();
+
+const LOCAL: WorkerApi = {
+  solve: (state, opts) => solveCFOP(state, opts),
+  cross: (state) => optimalCross(state),
+  xcross: (state) => optimalXCross(state),
+  slotCosts: (state) => slotCosts(state),
+};
 
 function getWorker(): Worker | null {
   if (worker) return worker;
   try {
     worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
     worker.onmessage = (e) => {
-      const { id, ok, solution, ms, error } = e.data;
+      const { id, ok, result, ms, error } = e.data;
       const p = pending.get(id);
       if (!p) return;
       pending.delete(id);
-      if (ok) p.resolve({ solution, ms });
+      if (ok) p.resolve({ result, ms });
       else p.reject(new Error(error));
     };
     worker.onerror = () => {
@@ -42,18 +46,24 @@ export function warmupSolver() {
   getWorker()?.postMessage({ type: 'warmup' } satisfies WorkerRequest);
 }
 
-function solveSync(state: State, opts: SolveOptions): Result {
+function callLocal<F extends Fn>(fn: F, args: Parameters<WorkerApi[F]>): Result<F> {
   const t0 = performance.now();
-  return { solution: solveCFOP(state, opts), ms: performance.now() - t0 };
+  const result = (LOCAL[fn] as (...a: unknown[]) => unknown)(...args) as ReturnType<WorkerApi[F]>;
+  return { result, ms: performance.now() - t0 };
 }
 
-/** Löst im Web Worker, damit die Oberfläche nie stockt. */
-export function solveAsync(state: State, opts: SolveOptions): Promise<Result> {
+/** Ruft eine Solver-Funktion im Web Worker auf, damit die Oberfläche nie stockt. */
+export function callSolver<F extends Fn>(fn: F, ...args: Parameters<WorkerApi[F]>): Promise<Result<F>> {
   const w = getWorker();
-  if (!w) return Promise.resolve(solveSync(state, opts));
+  if (!w) return Promise.resolve(callLocal(fn, args));
   const id = nextId++;
-  return new Promise<Result>((resolve, reject) => {
-    pending.set(id, { resolve, reject });
-    w.postMessage({ type: 'solve', id, state, opts, custom: getCustomAlgs() } satisfies WorkerRequest);
-  }).catch(() => solveSync(state, opts));
+  return new Promise<Result<F>>((resolve, reject) => {
+    pending.set(id, { resolve: resolve as (r: { result: unknown; ms: number }) => void, reject });
+    w.postMessage({ type: 'call', id, fn, args, custom: getCustomAlgs(), style: algStyle() } satisfies WorkerRequest);
+  }).catch(() => callLocal(fn, args));
+}
+
+export async function solveAsync(state: State, opts: SolveOptions): Promise<{ solution: Solution; ms: number }> {
+  const { result, ms } = await callSolver('solve', state, opts);
+  return { solution: result, ms };
 }

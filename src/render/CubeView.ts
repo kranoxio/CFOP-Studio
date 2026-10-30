@@ -5,6 +5,7 @@ import { MOVE_DEFS, type Move } from '../cube/cube';
 import { CubeModel, FACE_COLORS, type Quality, type StickerLook } from './CubeModel';
 import { MovePlayer } from './MovePlayer';
 import { perf } from './perf';
+import { isLight } from '../ui/theme';
 
 export interface CubeViewOptions {
   quality?: Quality;
@@ -137,6 +138,9 @@ export class CubeView {
     this.arrow.renderOrder = 10;
     this.scene.add(this.arrow);
 
+    this.applyTheme(isLight());
+    document.addEventListener('theme-change', (e) => this.applyTheme((e as CustomEvent<boolean>).detail));
+
     if (opts.interactive !== false) {
       const c = new OrbitControls(this.camera, this.renderer.domElement);
       c.enableDamping = true;
@@ -174,6 +178,15 @@ export class CubeView {
   }
 
   invalidate() {
+    this.dirty = true;
+  }
+
+  /** Auf hellem Hintergrund wirkt additives Leuchten nicht – dann normal gemischt. */
+  private applyTheme(light: boolean) {
+    const m = this.glow.material as THREE.MeshBasicMaterial;
+    m.blending = light ? THREE.NormalBlending : THREE.AdditiveBlending;
+    m.opacity = light ? 0.55 : 1;
+    m.needsUpdate = true;
     this.dirty = true;
   }
 

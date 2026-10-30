@@ -2,6 +2,7 @@ import { applyMoves, solvedState, type Move, type State } from '../cube/cube';
 import { f2lSolved, ollSolved, isSolved, SLOTS, slotSolved, crossSolved } from '../cube/analysis';
 import { formatAlg, invertAlg, netRotationFix, parseAlg, removeRotations, tryParseAlg } from '../cube/notation';
 import { ALL_CASES, CASE_BY_ID, type AlgCase } from './data';
+import { OH_ALGS } from './oh';
 import { storage } from '../util/storage';
 
 /**
@@ -19,12 +20,30 @@ export function rotationFree(text: string): Move[] {
 }
 
 const CUSTOM_KEY = 'customAlgs';
+/** Eigene Algs: Schlüssel = Fall-ID (2H) bzw. Fall-ID + "@oh" (einhändig) */
 let custom: Record<string, string> = storage.get(CUSTOM_KEY, {});
 
-/** Für den Solver-Worker (kein localStorage dort): eigene Algs übernehmen. */
-export function setCustomAlgs(map: Record<string, string>) {
-  custom = { ...map };
+export type AlgStyle = '2h' | 'oh';
+let style: AlgStyle = storage.get<{ algStyle?: AlgStyle }>('settings', {}).algStyle ?? '2h';
+
+export function setAlgStyle(s: AlgStyle) {
+  style = s;
   cacheVersion++;
+}
+export const algStyle = () => style;
+
+const customKey = (id: string) => (style === 'oh' ? `${id}@oh` : id);
+
+/** Für den Solver-Worker (kein localStorage dort): eigene Algs und Stil übernehmen. */
+export function setCustomAlgs(map: Record<string, string>, s: AlgStyle = style) {
+  custom = { ...map };
+  style = s;
+  cacheVersion++;
+}
+
+/** Standard-Algs des Falls im aktuellen Stil (OH fällt auf 2H zurück, z.B. bei F2L). */
+export function styleAlgs(c: AlgCase): string[] {
+  return style === 'oh' && OH_ALGS[c.id] ? OH_ALGS[c.id] : c.algs;
 }
 
 export function getCustomAlgs(): Record<string, string> {
@@ -32,12 +51,12 @@ export function getCustomAlgs(): Record<string, string> {
 }
 
 export function getCustomAlg(id: string): string | undefined {
-  return custom[id];
+  return custom[customKey(id)];
 }
 
 export function setCustomAlg(id: string, alg: string | null) {
-  if (alg) custom[id] = alg;
-  else delete custom[id];
+  if (alg) custom[customKey(id)] = alg;
+  else delete custom[customKey(id)];
   storage.set(CUSTOM_KEY, custom);
   cacheVersion++;
 }
@@ -47,7 +66,7 @@ export const algsVersion = () => cacheVersion;
 
 /** Der Alg, den der Nutzer für diesen Fall verwendet (eigener Alg oder Standard). */
 export function preferredAlg(c: AlgCase): string {
-  return custom[c.id] ?? c.algs[0];
+  return custom[customKey(c.id)] ?? styleAlgs(c)[0];
 }
 
 export function getCase(id: string): AlgCase {

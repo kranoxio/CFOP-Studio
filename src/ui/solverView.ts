@@ -1,5 +1,8 @@
 import { applyMoves, moveToString, solvedState, type Move, type State } from '../cube/cube';
-import { formatAlg, htm, parseAlg, randomScramble, tryParseAlg } from '../cube/notation';
+import { smartCube, sameColors } from '../smartcube/smartcube';
+import { reconstructionSteps } from '../smartcube/splits';
+import type { Solve } from './timerView';
+import { conjugateAlg, formatAlg, htm, invertAlg, parseAlg, randomScramble, simplify, tryParseAlg } from '../cube/notation';
 import type { Solution, SolveStep } from '../solver/cfop';
 import { solveAsync } from '../solver/client';
 import { CubeView } from '../render/CubeView';
@@ -15,6 +18,18 @@ const WCA_START: State = applyMoves(solvedState(), parseAlg('z2'));
 
 export const tpsFromSlider = (v: number) => 0.5 * Math.pow(40, v / 100);
 export const sliderFromTps = (t: number) => (Math.log(t / 0.5) / Math.log(40)) * 100;
+
+interface SolveSource {
+  /** Startzustand (Standard: gelöst, Weiss oben) */
+  base?: State;
+  /** Vorgegebene Schritte statt Solver (Rekonstruktion) */
+  steps?: SolveStep[];
+  title?: string;
+  /** Zusätzlich mit der Solver-Lösung vergleichen */
+  compare?: boolean;
+  /** Dauer des eigenen Solves (Rekonstruktion) */
+  seconds?: number;
+}
 
 interface Segment {
   kind: 'scramble' | 'step';
@@ -47,6 +62,11 @@ export class SolverView {
   private realtimeBtn!: HTMLButtonElement;
 
   private scramble: Move[] = [];
+  private liveBar!: HTMLElement;
+  private live = false;
+  private liveOff: Move[] = [];
+  private solTitle = h('h3', null, 'Lösung');
+  private modeSel!: HTMLSelectElement;
   private solution: Solution | null = null;
   private segments: Segment[] = [];
   private scrambleLen = 0;
@@ -121,9 +141,19 @@ export class SolverView {
       ),
       this.realtimeBtn,
     );
+    this.liveBar = h(
+      'div',
+      { class: 'live-bar' },
+      h('button', { class: 'chip-btn live-toggle', title: 'Der 3D-Würfel folgt deinem echten Würfel', onclick: () => this.setLive(!this.live) }, '🔵 Mitverfolgen'),
+      h('button', { class: 'chip-btn', title: 'Aktuellen Zustand deines Würfels lösen', onclick: () => this.solveMyCube() }, '🧊 Meinen Würfel lösen'),
+    );
+    smartCube.onStatus(() => this.updateLiveBar());
+    smartCube.onMove((ev) => this.onSmartMove(ev.move));
+    this.updateLiveBar();
     return h(
       'div',
       { class: 'controls glass' },
+      this.liveBar,
       h(
         'div',
         { class: 'transport' },
@@ -151,19 +181,19 @@ export class SolverView {
       }) as HTMLInputElement;
       return h('label', { class: 'toggle', title }, input, h('span', { class: 'toggle-ui' }), label);
     };
-    const modeSel = h(
+    const modeSel = (this.modeSel = h(
       'select',
       {
         class: 'select',
         onchange: () => {
           settings.f2lMode = modeSel.value as 'alg' | 'optimal';
           saveSettings();
-          this.solve(this.scramble, false);
+          if (!this.source.steps) this.solve(this.scramble, false, { base: this.source.base });
         },
       },
       h('option', { value: 'alg', selected: settings.f2lMode === 'alg' }, 'F2L: 41 Standard-Algs'),
       h('option', { value: 'optimal', selected: settings.f2lMode === 'optimal' }, 'F2L: Computer-optimal'),
-    ) as HTMLSelectElement;
+    ) as HTMLSelectElement);
 
     return h(
       'aside',
@@ -184,7 +214,7 @@ export class SolverView {
       h(
         'div',
         { class: 'card glass' },
-        h('div', { class: 'card-head' }, h('h3', null, 'Lösung'), modeSel),
+        h('div', { class: 'card-head' }, this.solTitle, modeSel),
         this.statsEl,
         this.stepsEl,
       ),
@@ -209,11 +239,14 @@ export class SolverView {
 
   activate() {
     if (!this.view) {
+      document.addEventListener('alg-style-change', () => !this.source.steps && this.solution && this.solve(this.scramble, false, { base: this.source.base }));
       this.view = new CubeView(this.stageSlot, { intro: true });
       this.stageSlot.prepend(this.view.renderer.domElement);
       const p = this.view.player;
       p.onIndex = (i) => this.onIndex(i);
       p.onFinish = () => this.onFinish();
+      // An Schrittgrenzen, wo pausiert wird, sauber abbremsen statt abrupt stoppen
+      p.isBoundary = (i) => i === this.scrambleLen || (settings.stopAfterStep && this.segments.some((s) => s.kind === 'step' && s.start === i));
       this.view.onFrame = (dt) => this.onFrame(dt);
       this.applyViewSettings();
       const fromHash = this.scrambleFromHash();
@@ -257,20 +290,26 @@ export class SolverView {
   }
 
   private solveToken = 0;
+  private source: SolveSource = {};
 
   /**
    * Startet sofort mit dem Verdrehen; die Lösung wird parallel im Web Worker berechnet
    * und an die laufende Wiedergabe angehängt.
    */
-  private async solve(scramble: Move[], animateScramble: boolean) {
+  private async solve(scramble: Move[], animateScramble: boolean, opts: SolveSource = {}) {
     if (!this.view) return;
     const token = ++this.solveToken;
     this.scramble = scramble;
     this.solution = null;
+    this.source = opts;
+    this.solTitle.textContent = opts.title ?? 'Lösung';
+    this.modeSel.style.display = opts.steps ? 'none' : '';
     this.scrambleLen = scramble.length;
     this.segments = [{ kind: 'scramble', stepIndex: -1, start: 0, end: scramble.length }];
+    const base = opts.base ?? WCA_START;
     const p = this.view.player;
-    p.load(WCA_START, [...scramble], animateScramble ? 0 : this.scrambleLen);
+    p.load(base, [...scramble], animateScramble ? 0 : this.scrambleLen);
+    this.liveOff = [];
     this.solveTime = 0;
     this.renderScramble();
     this.renderSteps();
@@ -284,9 +323,17 @@ export class SolverView {
     this.lastIndex = -1;
     this.activeSeg = -1;
     this.onIndex(p.index);
-    history.replaceState(null, '', `#scramble=${encodeURIComponent(formatAlg(scramble))}`);
+    if (scramble.length) history.replaceState(null, '', `#scramble=${encodeURIComponent(formatAlg(scramble))}`);
 
-    const { solution, ms } = await solveAsync(applyMoves(WCA_START, scramble), { f2lMode: settings.f2lMode });
+    let solution: Solution;
+    let ms: number | null = null;
+    if (opts.steps) {
+      solution = { steps: opts.steps, moveCount: opts.steps.reduce((n, st) => n + htm(st.moves), 0) };
+    } else {
+      const res = await solveAsync(applyMoves(base, scramble), { f2lMode: settings.f2lMode });
+      solution = res.solution;
+      ms = res.ms;
+    }
     if (token !== this.solveToken) return; // inzwischen neuer Scramble
     this.solution = solution;
     const added: Move[] = [];
@@ -301,6 +348,90 @@ export class SolverView {
     this.renderStats(ms);
     this.activeSeg = -1;
     this.onIndex(p.index);
+    if (opts.compare) {
+      // Vergleich mit der Solver-Lösung desselben Scrambles
+      const res = await solveAsync(applyMoves(base, scramble), { f2lMode: settings.f2lMode });
+      if (token === this.solveToken) this.statsEl.append(h('div', { class: 'compare-line' }, `Solver (CFOP mit Standard-Algs): ${res.solution.moveCount} Züge · du: ${solution.moveCount} Züge`));
+    }
+  }
+
+  /** Zeigt einen eigenen Smartcube-Solve Zug für Zug, aufgeteilt in Phasen. */
+  loadReconstruction(solve: Solve) {
+    if (!solve.moves || !solve.splits) return;
+    const scramble = parseAlg(solve.scramble);
+    const moves = parseAlg(solve.moves);
+    const steps = reconstructionSteps(applyMoves(WCA_START, scramble), moves, solve.splits);
+    const run = () => this.solve(scramble, false, { steps, title: `Deine Rekonstruktion · ${(solve.ms / 1000).toFixed(2)} s`, compare: true, seconds: solve.ms / 1000 });
+    if (this.view) run();
+    else setTimeout(run, 1600);
+  }
+
+  // ------------------------------------------------------------ Smartcube live
+
+  private updateLiveBar() {
+    this.liveBar.style.display = smartCube.connected ? '' : 'none';
+    if (!smartCube.connected && this.live) this.setLive(false);
+    this.liveBar.querySelector('.live-toggle')?.classList.toggle('active', this.live);
+  }
+
+  private setLive(on: boolean) {
+    this.live = on;
+    this.liveOff = [];
+    this.updateLiveBar();
+    if (on) {
+      this.view?.player.pause();
+      toast('Mitverfolgen an: mach den Scramble und die Lösung an deinem echten Würfel');
+      this.onSmartMove();
+    } else this.hud.hint.textContent = '';
+  }
+
+  /** Löst den Zustand, in dem sich der echte Würfel gerade befindet. */
+  private solveMyCube() {
+    if (!smartCube.connected) return;
+    this.solve([], false, { base: smartCube.state, title: 'Lösung deines Würfels' });
+    this.setLive(true);
+  }
+
+  /**
+   * Sucht in der Zeitleiste den Stand, der zum echten Würfel passt, und springt dorthin.
+   * Ein Schritt vorwärts wird animiert, damit es sich wie "mitdrehen" anfühlt.
+   */
+  private onSmartMove(move?: Move) {
+    const p = this.view?.player;
+    if (!this.live || !p) return;
+    const phys = smartCube.state;
+    const insp = this.segments.find((sg) => sg.kind === 'step' && sg.step!.phase === 'inspection');
+    const rotated = insp ? applyMoves(phys, p.moves.slice(insp.start, insp.end)) : phys;
+    const matches = (j: number) => {
+      if (insp && j > insp.start && j < insp.end) return false;
+      return sameColors(insp && j >= insp.end ? rotated : phys, p.states[j]);
+    };
+    let found = -1;
+    if (p.index + 1 < p.states.length && matches(p.index + 1)) found = p.index + 1;
+    else {
+      let bestDist = Infinity;
+      for (let j = 0; j < p.states.length; j++) {
+        if (matches(j) && Math.abs(j - p.index) < bestDist) {
+          found = j;
+          bestDist = Math.abs(j - p.index);
+        }
+      }
+    }
+    if (found >= 0) {
+      this.liveOff = [];
+      // Nach dem Scramble automatisch über die Inspektionsdrehung hinweg
+      if (insp && found === insp.start) found = insp.end;
+      if (found === p.index + 1) p.stepForward();
+      else if (found !== p.index) p.seek(found);
+      this.hud.hint.textContent = found === p.moves.length ? '🎉 Gelöst!' : '✓ Weiter so';
+    } else {
+      if (move) this.liveOff.push(move);
+      // Rückweg in der Haltung anzeigen, in der gerade gelöst wird (nach der Inspektion: Weiss unten)
+      let back = simplify(invertAlg(this.liveOff));
+      if (insp && p.index >= insp.end) back = conjugateAlg(back, invertAlg(p.moves.slice(insp.start, insp.end)));
+      back = simplify(back);
+      this.hud.hint.textContent = back.length ? `Abweichung – zurück mit: ${formatAlg(back)}` : 'Würfel passt nicht – „Meinen Würfel lösen“ nutzen';
+    }
   }
 
   private scrambleFromHash(): Move[] | null {
@@ -547,7 +678,7 @@ export class SolverView {
     this.scrambleEl.append(formatAlg(this.scramble));
   }
 
-  private renderStats(solveMs: number) {
+  private renderStats(solveMs: number | null) {
     clear(this.statsEl);
     if (!this.solution) return;
     const total = this.solution.moveCount;
@@ -565,7 +696,9 @@ export class SolverView {
         { class: 'stat-row' },
         h('div', { class: 'stat' }, h('b', null, String(total)), h('span', null, 'Züge (HTM)')),
         h('div', { class: 'stat' }, h('b', null, tps.toFixed(1)), h('span', null, `TPS für ${settings.targetTime} s`)),
-        h('div', { class: 'stat' }, h('b', null, `${solveMs.toFixed(0)}`), h('span', null, 'ms Rechenzeit')),
+        solveMs === null
+          ? h('div', { class: 'stat' }, h('b', null, `${(total / Math.max(0.01, this.source.seconds ?? 0)).toFixed(1)}`), h('span', null, 'deine TPS'))
+          : h('div', { class: 'stat' }, h('b', null, `${solveMs.toFixed(0)}`), h('span', null, 'ms Rechenzeit')),
       ),
       bar,
       h('div', { class: 'phase-legend' }, ...[...byPhase.keys()].filter((k) => byPhase.get(k)).map((k) => h('span', { style: `--c:${PHASE_COLORS[k as keyof typeof PHASE_COLORS]}` }, PHASE_LABELS[k as keyof typeof PHASE_LABELS]))),

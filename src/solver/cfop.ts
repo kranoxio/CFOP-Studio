@@ -13,7 +13,7 @@ import {
 } from '../cube/analysis';
 import { conjugateAlg, formatAlg, htm, parseAlg, rotationToHome, simplify } from '../cube/notation';
 import { F2L_CASES, OLL_CASES, PLL_CASES, type AlgCase } from '../algs/data';
-import { normalizeAlg, preferredAlg, rotationFree } from '../algs/registry';
+import { normalizeAlg, preferredAlg, rotationFree, styleAlgs } from '../algs/registry';
 import { FWD, MOVE_FACE, SEARCH_MOVES, crossIndex, getCrossTable, getPairTable, pairIndex } from './tables';
 
 export type Phase = 'inspection' | 'cross' | 'f2l' | 'oll' | 'pll';
@@ -87,7 +87,7 @@ const F2L_SEARCH_FACES = new Set([0, 1, 2, 4, 5]); // ohne D
  * Sucht die kürzeste Zugfolge, die das Paar des Zielslots einsetzt und dabei Kreuz
  * und bereits gelöste Slots erhält. Durchsucht mehrere Slots gleichzeitig mit wachsender Tiefe.
  */
-export function searchF2L(s: State, keep: SlotInfo[], targets: SlotInfo[], maxDepth = 14): { slot: SlotInfo; moves: Move[] } | null {
+export function searchF2L(s: State, keep: SlotInfo[], targets: SlotInfo[], maxDepth = 14, allowD = false): { slot: SlotInfo; moves: Move[] } | null {
   const cross = getCrossTable();
   const keepTables = keep.map((k) => getPairTable(SLOTS.indexOf(k)));
   const keepTokens = keep.flatMap((k) => [k.cornerToken, k.edgeToken]);
@@ -120,10 +120,10 @@ export function searchF2L(s: State, keep: SlotInfo[], targets: SlotInfo[], maxDe
         const next = stack[depth + 1];
         for (let m = 0; m < FWD.length; m++) {
           const face = MOVE_FACE[m];
-          if (!F2L_SEARCH_FACES.has(face)) continue;
+          if (!allowD && !F2L_SEARCH_FACES.has(face)) continue;
           if (face === lastFace) continue;
           // Gegenüberliegende Flächen nur in einer Reihenfolge (R vor L, F vor B)
-          if ((face === 4 && lastFace === 1) || (face === 5 && lastFace === 2)) continue;
+          if ((face === 4 && lastFace === 1) || (face === 5 && lastFace === 2) || (face === 3 && lastFace === 0)) continue;
           const f = FWD[m];
           for (let i = 0; i < n; i++) next[i] = f[p[i]];
           path.push(m);
@@ -158,7 +158,7 @@ function focusForSlot(slot: SlotInfo) {
 
 function caseAlgs(c: AlgCase): string[] {
   const pref = preferredAlg(c);
-  return [pref, ...c.algs.filter((a) => a !== pref)];
+  return [pref, ...styleAlgs(c).filter((a) => a !== pref)];
 }
 
 interface F2LCandidate {
@@ -271,33 +271,21 @@ export function solveCFOP(start: State, opts: SolveOptions = { f2lMode: 'alg' })
   if (ollSolved(s)) {
     steps.push({ phase: 'oll', title: 'OLL', subtitle: 'OLL Skip!', moves: [], aufCount: 0, postAufCount: 0, method: 'skip', focus: LL_FACELETS });
   } else {
-    let done = false;
-    for (let a = 0; a < 4 && !done; a++) {
-      const afterAuf = applyMoves(s, AUF[a]);
-      for (const c of OLL_CASES) {
-        for (const algText of caseAlgs(c)) {
-          const alg = normalizeAlg(algText);
-          if (!ollSolved(applyMoves(afterAuf, alg))) continue;
-          steps.push({
-            phase: 'oll',
-            title: 'OLL',
-            subtitle: `OLL ${c.key}${c.name ? ` · ${c.name}` : ''}`,
-            caseId: c.id,
-            moves: [...AUF[a], ...alg],
-            aufCount: AUF[a].length,
-            postAufCount: 0,
-            method: 'alg',
-            note: c.group,
-            focus: LL_FACELETS,
-          });
-          s = applyMoves(afterAuf, alg);
-          done = true;
-          break;
-        }
-        if (done) break;
-      }
-    }
-    if (!done) throw new Error('OLL nicht erkannt');
+    const r = recognizeOLL(s);
+    if (!r) throw new Error('OLL nicht erkannt');
+    steps.push({
+      phase: 'oll',
+      title: 'OLL',
+      subtitle: `OLL ${r.caseRef.key}${r.caseRef.name ? ` · ${r.caseRef.name}` : ''}`,
+      caseId: r.caseRef.id,
+      moves: [...r.auf, ...r.alg],
+      aufCount: r.auf.length,
+      postAufCount: 0,
+      method: 'alg',
+      note: r.caseRef.group,
+      focus: LL_FACELETS,
+    });
+    s = r.end;
   }
 
   // PLL
@@ -315,36 +303,98 @@ export function solveCFOP(start: State, opts: SolveOptions = { f2lMode: 'alg' })
     });
     s = applyMoves(s, pllSkip);
   } else {
-    let done = false;
-    for (let a = 0; a < 4 && !done; a++) {
-      const afterAuf = applyMoves(s, AUF[a]);
-      for (const c of PLL_CASES) {
-        for (const algText of caseAlgs(c)) {
-          const alg = normalizeAlg(algText);
-          const end = applyMoves(afterAuf, alg);
-          const post = AUF.find((m) => isSolved(applyMoves(end, m)));
-          if (!post) continue;
-          steps.push({
-            phase: 'pll',
-            title: 'PLL',
-            subtitle: `${c.name ?? c.key}`,
-            caseId: c.id,
-            moves: [...AUF[a], ...alg, ...post],
-            aufCount: AUF[a].length,
-            postAufCount: post.length,
-            method: 'alg',
-            note: c.group,
-            focus: LL_FACELETS,
-          });
-          s = applyMoves(end, post);
-          done = true;
-          break;
-        }
-        if (done) break;
-      }
-    }
-    if (!done) throw new Error('PLL nicht erkannt');
+    const r = recognizePLL(s);
+    if (!r) throw new Error('PLL nicht erkannt');
+    steps.push({
+      phase: 'pll',
+      title: 'PLL',
+      subtitle: `${r.caseRef.name ?? r.caseRef.key}`,
+      caseId: r.caseRef.id,
+      moves: [...r.auf, ...r.alg, ...r.post],
+      aufCount: r.auf.length,
+      postAufCount: r.post.length,
+      method: 'alg',
+      note: r.caseRef.group,
+      focus: LL_FACELETS,
+    });
+    s = r.end;
   }
   if (!isSolved(s)) throw new Error('Lösung unvollständig');
   return { steps, moveCount: steps.reduce((n, st) => n + htm(st.moves), 0) };
+}
+
+// ---------------------------------------------------------------- Erkennung & Analyse
+
+export interface Recognition {
+  caseRef: AlgCase;
+  auf: Move[];
+  alg: Move[];
+  post: Move[];
+  end: State;
+}
+
+/** Erkennt den OLL-Fall eines Zustands mit gelöstem F2L (oder null, falls schon orientiert). */
+export function recognizeOLL(s: State): Recognition | null {
+  if (ollSolved(s)) return null;
+  for (let a = 0; a < 4; a++) {
+    const afterAuf = applyMoves(s, AUF[a]);
+    for (const c of OLL_CASES) {
+      for (const algText of caseAlgs(c)) {
+        const alg = normalizeAlg(algText);
+        const end = applyMoves(afterAuf, alg);
+        if (ollSolved(end)) return { caseRef: c, auf: AUF[a], alg, post: [], end };
+      }
+    }
+  }
+  return null;
+}
+
+/** Erkennt den PLL-Fall eines orientierten Zustands (oder null bei PLL-Skip). */
+export function recognizePLL(s: State): Recognition | null {
+  if (AUF.some((m) => isSolved(applyMoves(s, m)))) return null;
+  for (let a = 0; a < 4; a++) {
+    const afterAuf = applyMoves(s, AUF[a]);
+    for (const c of PLL_CASES) {
+      for (const algText of caseAlgs(c)) {
+        const alg = normalizeAlg(algText);
+        const end = applyMoves(afterAuf, alg);
+        const post = AUF.find((m) => isSolved(applyMoves(end, m)));
+        if (post) return { caseRef: c, auf: AUF[a], alg, post, end: applyMoves(end, post) };
+      }
+    }
+  }
+  return null;
+}
+
+/** Optimales Kreuz (exakt über die Distanztabelle). */
+export function optimalCross(s: State): Move[] {
+  return solveCross(s);
+}
+
+/** Optimales X-Cross: Kreuz + ein beliebiges Paar mit möglichst wenigen Zügen. */
+export function optimalXCross(s: State, maxDepth = 12): { slot: SlotInfo; moves: Move[] } | null {
+  return searchF2L(s, [], SLOTS, maxDepth, true);
+}
+
+export interface SlotCost {
+  slot: SlotName;
+  cost: number;
+  caseId?: string;
+}
+
+/**
+ * Kosten (Züge HTM) für jeden offenen Slot ausgehend vom aktuellen Zustand –
+ * Grundlage für den Lookahead-Trainer.
+ */
+export function slotCosts(s: State): SlotCost[] {
+  const solved = SLOTS.filter((sl) => slotSolved(s, sl));
+  const open = SLOTS.filter((sl) => !slotSolved(s, sl));
+  const lookups = lookupF2L(s, solved, open);
+  return open.map((slot) => {
+    let best: F2LCandidate | null = null;
+    for (const c of lookups) if (c.slot === slot && (!best || c.cost < best.cost)) best = c;
+    if (best) return { slot: slot.name, cost: best.cost, caseId: best.caseRef?.id };
+    const found = searchF2L(s, solved, [slot], 13);
+    return { slot: slot.name, cost: found ? htm(found.moves) : 99 };
+  });
 }
