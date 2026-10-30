@@ -123,3 +123,56 @@ export function netDiagram(s: State, width = 240): SVGSVGElement {
   }
   return svg;
 }
+
+/** 2x2-Draufsicht: [Facelet, Spalte, Reihe] im 4x4-Raster */
+const LAYOUT2: [number, number, number][] = [
+  [0, 1, 1], [2, 2, 1], [6, 1, 2], [8, 2, 2],
+  [47, 1, 0], [45, 2, 0],
+  [18, 1, 3], [20, 2, 3],
+  [36, 0, 1], [38, 0, 2],
+  [11, 3, 1], [9, 3, 2],
+];
+
+/** Draufsicht der oberen Ebene eines 2x2 ('oll': nur Gelb farbig). */
+export function llDiagram2(s: State, mode: 'oll' | 'all', size = 92): SVGSVGElement {
+  const cell = 24;
+  const svg = svgEl('svg', { viewBox: `-2 -2 ${cell * 4 + 4} ${cell * 4 + 4}`, width: size, height: size, class: 'll-diagram' });
+  for (const [i, col, row] of LAYOUT2) {
+    const color = Math.floor(s[i] / 9);
+    const fill = mode === 'oll' && color !== 0 ? GRAY : FACE_COLORS[color];
+    let x = col * cell + 1;
+    let y = row * cell + 1;
+    let w = cell - 2;
+    let hgt = cell - 2;
+    if (row === 0) { hgt = 7; y = row * cell + cell - 9; }
+    if (row === 3) { hgt = 7; y = row * cell + 2; }
+    if (col === 0) { w = 7; x = col * cell + cell - 9; }
+    if (col === 3) { w = 7; x = col * cell + 2; }
+    svg.append(svgEl('rect', { x, y, width: w, height: hgt, rx: 3, fill }));
+  }
+  return svg;
+}
+
+/** 2x2-Netz (nur Ecken) für die Timer-Vorschau */
+export function netDiagram2(s: State, width = 200): SVGSVGElement {
+  const c = 14;
+  const gap = 3;
+  const svg = svgEl('svg', { viewBox: `0 0 ${(c * 2 + gap) * 4} ${(c * 2 + gap) * 3}`, width, class: 'net-diagram' });
+  const off: Record<number, [number, number]> = { 0: [1, 0], 4: [0, 1], 2: [1, 1], 1: [2, 1], 5: [3, 1], 3: [1, 2] };
+  for (let f = 0; f < 6; f++) {
+    const [fx, fy] = off[f];
+    [0, 2, 6, 8].forEach((k, j) => {
+      svg.append(
+        svgEl('rect', {
+          x: fx * (c * 2 + gap) + (j % 2) * c + 0.5,
+          y: fy * (c * 2 + gap) + Math.floor(j / 2) * c + 0.5,
+          width: c - 1,
+          height: c - 1,
+          rx: 2,
+          fill: FACE_COLORS[Math.floor(s[f * 9 + k] / 9)],
+        }),
+      );
+    });
+  }
+  return svg;
+}

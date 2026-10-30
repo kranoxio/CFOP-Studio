@@ -375,6 +375,8 @@ textarea.input { resize: vertical; }
 .cube-chip { display: none; background: rgba(26, 92, 255, 0.15); border: 1px solid rgba(26, 92, 255, 0.5); color: var(--text); border-radius: 99px; padding: 4px 10px; font-size: 12px; white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
 .cube-chip.on { display: inline-block; }
 .settings-btn { font-size: 16px; color: var(--muted); flex: none; }
+.puzzle-switch { padding: 2px; border-radius: 10px; }
+.puzzle-switch .seg { padding: 5px 10px; font-size: 13px; border-radius: 8px; }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
 /* ---------------------------------------------------------- Toast */
@@ -390,7 +392,10 @@ textarea.input { resize: vertical; }
   :root { --topbar: 50px; --bottombar: 62px; }
   .top-nav { display: none; }
   .topbar { justify-content: center; position: relative; }
-  .topbar-right { position: absolute; right: 10px; }
+  .topbar { justify-content: space-between; padding: 0 12px; }
+  .logo { font-size: 16px; }
+  .topbar-right { position: static; gap: 6px; }
+  .cube-chip.on { display: none; }
   .perf-toggle { width: 30px; height: 30px; }
   .perf-meter { position: absolute; top: calc(100% + 8px); right: 0; font-size: 10px; padding: 3px 6px; z-index: 30; }
   .bottom-nav {

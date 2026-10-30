@@ -1,4 +1,7 @@
-export type AlgSet = 'F2L' | 'OLL' | 'PLL';
+import { CASES_2X2 } from './data2';
+
+export type AlgSet = 'F2L' | 'OLL' | 'PLL' | '2OLL' | 'PBL' | 'CLL' | 'EG1' | 'EG2';
+export type Puzzle = 2 | 3;
 
 export interface AlgCase {
   /** Eindeutige ID, z.B. "OLL-27" */
@@ -13,6 +16,8 @@ export interface AlgCase {
   algs: string[];
   /** Wahrscheinlichkeit als Bruch-Nenner (1/x) bzw. relative Häufigkeit */
   prob?: string;
+  /** 2 = 2x2-Würfel, sonst 3x3 */
+  puzzle?: Puzzle;
 }
 
 const f2l = (n: number, group: string, algs: string[]): AlgCase => ({
@@ -172,5 +177,24 @@ export const PLL_CASES: AlgCase[] = [
   pll('Gd', 'G-Perms', ["R U R' U' D R2 U' R U' R' U R' U R2 D'"], 'Gd-Perm', '1/18'),
 ];
 
-export const ALL_CASES: AlgCase[] = [...F2L_CASES, ...OLL_CASES, ...PLL_CASES];
+export const ALL_CASES: AlgCase[] = [...F2L_CASES, ...OLL_CASES, ...PLL_CASES, ...CASES_2X2];
+
+export const SETS_BY_PUZZLE: Record<Puzzle, AlgSet[]> = {
+  3: ['F2L', 'OLL', 'PLL'],
+  2: ['2OLL', 'PBL', 'CLL', 'EG1', 'EG2'],
+};
+
+export const SET_LABEL: Record<AlgSet, string> = {
+  F2L: 'F2L',
+  OLL: 'OLL',
+  PLL: 'PLL',
+  '2OLL': 'OLL',
+  PBL: 'PBL',
+  CLL: 'CLL',
+  EG1: 'EG-1',
+  EG2: 'EG-2',
+};
+
+export const puzzleOfSet = (set: AlgSet): Puzzle => (SETS_BY_PUZZLE[2].includes(set) ? 2 : 3);
+export const caseTitle = (c: AlgCase) => `${SET_LABEL[c.set]} ${c.key}`;
 export const CASE_BY_ID = new Map(ALL_CASES.map((c) => [c.id, c]));

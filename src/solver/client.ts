@@ -2,6 +2,7 @@ import type { State } from '../cube/cube';
 import { algStyle, getCustomAlgs } from '../algs/registry';
 import { optimalCross, optimalXCross, slotCosts, solveCFOP, type Solution, type SolveOptions } from './cfop';
 import type { WorkerApi, WorkerRequest } from './worker';
+import { solve2x2 } from './cube2';
 
 type Fn = keyof WorkerApi;
 type Result<F extends Fn> = { result: ReturnType<WorkerApi[F]>; ms: number };
@@ -15,6 +16,7 @@ const LOCAL: WorkerApi = {
   cross: (state) => optimalCross(state),
   xcross: (state) => optimalXCross(state),
   slotCosts: (state) => slotCosts(state),
+  solve2: (state, method) => solve2x2(state, method),
 };
 
 function getWorker(): Worker | null {

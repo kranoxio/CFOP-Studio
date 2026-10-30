@@ -1,14 +1,14 @@
 import { moveToString, type Move } from '../cube/cube';
 import { htm } from '../cube/notation';
-import { ALL_CASES, type AlgCase, type AlgSet } from '../algs/data';
-import { algStyle, caseState, getCustomAlg, normalizeAlg, preferredAlg, setCustomAlg, styleAlgs, validateAlg } from '../algs/registry';
+import { ALL_CASES, SETS_BY_PUZZLE, SET_LABEL, caseTitle, type AlgCase, type AlgSet } from '../algs/data';
+import { algMoves, algStyle, caseState, getCustomAlg, preferredAlg, setCustomAlg, styleAlgs, validateAlg } from '../algs/registry';
 import { GridRenderer } from '../render/GridRenderer';
 import { CubeView } from '../render/CubeView';
 import { lookFor } from './looks';
 import { progress, type LearnStatus } from '../progress';
 import { settings, saveSettings } from '../settings';
 import { clear, h, modal, toast } from './dom';
-import { llDiagram } from './caseDiagram';
+import { llDiagram, llDiagram2 } from './caseDiagram';
 import { sliderFromTps, tpsFromSlider } from './solverView';
 
 const STATUS_LABEL: Record<LearnStatus, string> = { new: 'Neu', learning: 'Am Lernen', learned: 'Gelernt' };
@@ -18,7 +18,7 @@ export class AlgsView {
   private grid: GridRenderer | null = null;
   private scroll: HTMLElement;
   private gridEl = h('div', { class: 'alg-grid' });
-  private set: AlgSet = 'OLL';
+  private set: AlgSet = settings.puzzle === 2 ? '2OLL' : 'OLL';
   private group = 'Alle';
   private query = '';
   private filter: 'all' | 'fav' | LearnStatus = 'all';
@@ -94,6 +94,14 @@ export class AlgsView {
       this.scroll,
     );
     document.addEventListener('alg-style-change', () => this.grid && this.renderGrid());
+    document.addEventListener('puzzle-change', () => {
+      if (!SETS_BY_PUZZLE[settings.puzzle].includes(this.set)) this.set = SETS_BY_PUZZLE[settings.puzzle][settings.puzzle === 2 ? 0 : 1];
+      this.group = 'Alle';
+      if (this.grid) {
+        this.renderTabs();
+        this.renderGrid();
+      }
+    });
     progress.subscribe(() => {
       this.renderTabs();
       this.refreshBadges();
@@ -124,11 +132,11 @@ export class AlgsView {
 
   private renderTabs() {
     clear(this.tabs);
-    for (const set of ['F2L', 'OLL', 'PLL'] as AlgSet[]) {
+    for (const set of SETS_BY_PUZZLE[settings.puzzle]) {
       const cases = ALL_CASES.filter((c) => c.set === set);
       const learned = cases.filter((c) => progress.status(c.id) === 'learned').length;
       this.tabs.append(
-        h('button', { class: `seg ${set === this.set ? 'active' : ''}`, onclick: () => this.setSet(set) }, set, h('span', { class: 'seg-count' }, `${learned}/${cases.length}`)),
+        h('button', { class: `seg ${set === this.set ? 'active' : ''}`, onclick: () => this.setSet(set) }, SET_LABEL[set], h('span', { class: 'seg-count' }, `${learned}/${cases.length}`)),
       );
     }
     clear(this.groupsEl);
@@ -154,7 +162,7 @@ export class AlgsView {
       if (this.filter === 'fav' && !progress.isFav(c.id)) return false;
       if (['new', 'learning', 'learned'].includes(this.filter) && progress.status(c.id) !== this.filter) return false;
       if (this.query) {
-        const hay = `${c.set} ${c.key} ${c.name ?? ''} ${c.group} ${styleAlgs(c).join(' ')}`.toLowerCase();
+        const hay = `${caseTitle(c)} ${c.name ?? ''} ${c.group} ${styleAlgs(c).join(' ')}`.toLowerCase();
         if (!hay.includes(this.query)) return false;
       }
       return true;
@@ -185,7 +193,7 @@ export class AlgsView {
         h(
           'div',
           { class: 'alg-card-info' },
-          h('div', { class: 'alg-card-title' }, h('b', null, `${c.set} ${c.key}`), c.name ? h('span', { class: 'muted' }, c.name) : null),
+          h('div', { class: 'alg-card-title' }, h('b', null, caseTitle(c)), c.name && c.name !== c.key ? h('span', { class: 'muted' }, c.name) : null),
           h('div', { class: 'alg-card-alg mono' }, alg),
           h(
             'div',
@@ -206,7 +214,7 @@ export class AlgsView {
       );
       this.cardEls.set(c.id, card);
       this.gridEl.append(card);
-      cells.push({ el: view, base: caseState(c), moves: normalizeAlg(alg), look: lookFor(c.set), view: c.set === 'F2L' ? ('side' as const) : ('top' as const) });
+      cells.push({ el: view, base: caseState(c), moves: algMoves(c, alg), look: lookFor(c.set), view: c.set === 'F2L' ? ('side' as const) : ('top' as const), size: c.puzzle === 2 ? (2 as const) : (3 as const) });
     }
     if (!cases.length) this.gridEl.append(h('div', { class: 'empty muted' }, 'Keine Fälle für diesen Filter.'));
     this.grid?.setCells(cells);
@@ -242,12 +250,13 @@ export class AlgsView {
 
     const load = () => {
       if (!view) return;
-      const moves = normalizeAlg(algText);
+      const moves = algMoves(c, algText);
       view.player.load(caseState(c, algText), moves);
       view.player.tps = settings.gridTps;
       renderChips(moves);
       clear(diagram);
-      if (c.set !== 'F2L') diagram.append(llDiagram(caseState(c, algText), c.set === 'OLL' ? 'oll' : 'pll', 110));
+      if (c.puzzle === 2) diagram.append(llDiagram2(caseState(c, algText), c.set === '2OLL' ? 'oll' : 'all', 110));
+      else if (c.set !== 'F2L') diagram.append(llDiagram(caseState(c, algText), c.set === 'OLL' ? 'oll' : 'pll', 110));
       setTimeout(() => view?.player.play(), 500);
     };
     const renderChips = (moves: Move[]) => {
@@ -284,7 +293,7 @@ export class AlgsView {
                 load();
               },
             }, a),
-            h('span', { class: 'muted small mono' }, `${htm(normalizeAlg(a))}`),
+            h('span', { class: 'muted small mono' }, `${htm(algMoves(c, a))}`),
             h('button', {
               class: `chip-btn small ${mine ? 'active' : ''}`,
               title: 'Diesen Alg im Solver und Trainer verwenden',
@@ -326,7 +335,7 @@ export class AlgsView {
       h(
         'div',
         { class: 'detail-head' },
-        h('h2', null, `${c.set} ${c.key}`, c.name ? h('span', { class: 'muted' }, ` · ${c.name}`) : null),
+        h('h2', null, caseTitle(c), c.name && c.name !== c.key ? h('span', { class: 'muted' }, ` · ${c.name}`) : null),
         h('div', { class: 'muted' }, c.group, c.prob ? ` · Wahrscheinlichkeit ${c.prob}` : ''),
       ),
       h(
@@ -352,7 +361,7 @@ export class AlgsView {
           { class: 'detail-right' },
           diagram,
           h('div', { class: 'btn-row' }, favBtn, statusSel),
-          h('h4', null, algStyle() === 'oh' && c.set !== 'F2L' ? 'Algorithmen (OH)' : 'Algorithmen'),
+          h('h4', null, algStyle() === 'oh' && (c.set === 'OLL' || c.set === 'PLL') ? 'Algorithmen (OH)' : 'Algorithmen'),
           algList,
           h('h4', null, 'Eigener Alg'),
           h(
@@ -402,10 +411,11 @@ export class AlgsView {
     requestAnimationFrame(() => {
       if (!this.detailView) this.detailView = new CubeView(stage, { cameraDistance: 9.5 });
       else this.detailView.mount(stage);
+      this.detailView.setPuzzle(c.puzzle === 2 ? 2 : 3);
       view = this.detailView;
       view.setRunning(true);
       view.showArrows = true;
-      view.arrowColor = c.set === 'F2L' ? '#3ddc84' : c.set === 'OLL' ? '#ffd60a' : '#c77dff';
+      view.arrowColor = c.set === 'F2L' ? '#3ddc84' : c.set === 'OLL' || c.set === '2OLL' || c.set === 'CLL' ? '#ffd60a' : c.set === 'EG1' || c.set === 'EG2' ? '#ff9f43' : '#c77dff';
       view.setPhaseColor(view.arrowColor);
       view.look = lookFor(c.set);
       view.resetCamera(c.set === 'F2L' ? 'default' : 'top');

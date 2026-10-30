@@ -11,6 +11,7 @@ export interface GridCell {
   moves: Move[];
   look?: (home: number) => StickerLook;
   view: 'side' | 'top';
+  size?: 2 | 3;
 }
 
 interface CellRuntime extends GridCell {
@@ -32,7 +33,7 @@ interface CellRuntime extends GridCell {
 export class GridRenderer {
   readonly renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
-  private model = new CubeModel('low');
+  private models = { 3: new CubeModel('low', 3), 2: new CubeModel('low', 2) };
   private cams = {
     side: new THREE.PerspectiveCamera(30, 1, 0.1, 50),
     top: new THREE.PerspectiveCamera(30, 1, 0.1, 50),
@@ -63,7 +64,7 @@ export class GridRenderer {
     pmrem.dispose();
     const key = new THREE.DirectionalLight('#ffffff', 1.0);
     key.position.set(4, 8, 6);
-    this.scene.add(key, new THREE.AmbientLight('#ffffff', 0.3), this.model.root);
+    this.scene.add(key, new THREE.AmbientLight('#ffffff', 0.3), this.models[3].root, this.models[2].root);
 
     this.cams.side.position.set(0.62, 0.55, 1).normalize().multiplyScalar(9.6);
     this.cams.side.lookAt(0, 0, 0);
@@ -144,8 +145,12 @@ export class GridRenderer {
       if (!fullRedraw && c.player.position === before) continue;
 
       const f = c.player.frame();
-      this.model.paint({ state: f.state, look: c.look });
-      this.model.setTurn(f.move, f.progress);
+      const size = c.size ?? 3;
+      const model = this.models[size];
+      this.models[3].root.visible = size === 3;
+      this.models[2].root.visible = size === 2;
+      model.paint({ state: f.state, look: c.look });
+      model.setTurn(f.move, f.progress);
 
       const rect = c.rect!;
       const top = Math.max(rect.top, clip.top);

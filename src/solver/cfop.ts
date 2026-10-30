@@ -16,7 +16,7 @@ import { F2L_CASES, OLL_CASES, PLL_CASES, type AlgCase } from '../algs/data';
 import { normalizeAlg, preferredAlg, rotationFree, styleAlgs } from '../algs/registry';
 import { FWD, MOVE_FACE, SEARCH_MOVES, crossIndex, getCrossTable, getPairTable, pairIndex } from './tables';
 
-export type Phase = 'inspection' | 'cross' | 'f2l' | 'oll' | 'pll';
+export type Phase = 'inspection' | 'cross' | 'f2l' | 'oll' | 'pll' | 'face' | 'layer' | 'pbl' | 'cll' | 'eg';
 
 export interface SolveStep {
   phase: Phase;

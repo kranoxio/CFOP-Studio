@@ -21,6 +21,10 @@ export interface Settings {
   lookaheadTps: number;
   crossGoal: 'cross' | 'xcross';
   crossInspection: boolean;
+  /** Aktives Puzzle */
+  puzzle: 2 | 3;
+  /** Methode für den 2x2 (bestimmt die verwendeten Alg-Kategorien) */
+  method2: 'ortega' | 'cll' | 'eg';
 }
 
 const DEFAULTS: Settings = {
@@ -42,6 +46,8 @@ const DEFAULTS: Settings = {
   lookaheadTps: 2.5,
   crossGoal: 'cross',
   crossInspection: true,
+  puzzle: 3,
+  method2: 'ortega',
 };
 
 export const settings: Settings = { ...DEFAULTS, ...storage.get<Partial<Settings>>('settings', {}) };

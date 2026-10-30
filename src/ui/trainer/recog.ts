@@ -1,7 +1,9 @@
 import { applyMoves, moveToString, solvedState, type Move } from '../../cube/cube';
 import { invertAlg } from '../../cube/notation';
-import { ALL_CASES, type AlgCase, type AlgSet } from '../../algs/data';
-import { normalizeAlg, preferredAlg } from '../../algs/registry';
+import { ALL_CASES, SETS_BY_PUZZLE, SET_LABEL, caseTitle, type AlgCase, type AlgSet, type Puzzle } from '../../algs/data';
+import { settings } from '../../settings';
+import { storage } from '../../util/storage';
+import { algMoves, preferredAlg } from '../../algs/registry';
 import { progress } from '../../progress';
 import { clear, h } from '../dom';
 import { lookFor } from '../looks';
@@ -11,13 +13,16 @@ import type { TrainerContext, TrainerMode } from './types';
 type Pool = 'all' | 'fav' | 'learning' | 'notLearned';
 
 const U = (n: number): Move[] => (n ? [{ base: 'U', amount: n as 1 | 2 | 3 }] : []);
+const D = (n: number): Move[] => (n ? [{ base: 'D', amount: n as 1 | 2 | 3 }] : []);
+const SET_PHASE: Record<AlgSet, keyof typeof PHASE_COLORS> = { F2L: 'f2l', OLL: 'oll', PLL: 'pll', '2OLL': 'oll', PBL: 'pbl', CLL: 'cll', EG1: 'eg', EG2: 'eg' };
 
 /** Erkennungs-Trainer: Fall erkennen, aufdecken, bewerten. Schwache Fälle kommen öfter. */
 export class RecogMode implements TrainerMode {
   readonly id = 'recog';
   readonly label = 'Erkennung';
   private ctx: TrainerContext | null = null;
-  private set: AlgSet = 'PLL';
+  /** Gewählte Kategorien je Puzzle (Mehrfachauswahl) */
+  private sets: Record<Puzzle, AlgSet[]> = storage.get('recogSets', { 3: ['PLL'], 2: ['CLL'] } as Record<Puzzle, AlgSet[]>);
   private pool: Pool = 'all';
   private current: AlgCase | null = null;
   private shownAt = 0;
@@ -25,13 +30,14 @@ export class RecogMode implements TrainerMode {
   private recogMs = 0;
   private forced: string | null = null;
   private statsEl = h('div', { class: 'trainer-stats' });
-  private setTabs = h('div', { class: 'seg-tabs' });
+  private setTabs = h('div', { class: 'group-chips' });
   private session = { n: 0, hits: 0 };
   private timerEl = h('div', { class: 'trainer-timer mono' }, '0.00');
 
   /** Einen bestimmten Fall als Nächstes zeigen. */
   train(id: string) {
-    this.set = id.split('-')[0] as AlgSet;
+    const c = ALL_CASES.find((x) => x.id === id);
+    if (c) this.sets[c.puzzle === 2 ? 2 : 3] = [c.set];
     this.forced = id;
     if (this.ctx) {
       this.renderTabs();
@@ -51,7 +57,7 @@ export class RecogMode implements TrainerMode {
     ) as HTMLSelectElement;
     poolSel.value = this.pool;
     ctx.side.append(
-      h('div', { class: 'card glass' }, h('div', { class: 'card-head' }, h('h3', null, 'Erkennungs-Trainer')), h('div', { class: 'toolbar-row' }, this.setTabs, poolSel), h('p', { class: 'muted small' }, 'Erkenne den Fall so schnell wie möglich und tippe auf „Aufdecken“ (oder Leertaste). Danach ehrlich bewerten – Fälle, die du nicht weisst, kommen öfter dran.')),
+      h('div', { class: 'card glass' }, h('div', { class: 'card-head' }, h('h3', null, 'Erkennungs-Trainer')), h('div', { class: 'muted small' }, 'Kategorien (mehrere wählbar):'), h('div', { class: 'toolbar-row' }, this.setTabs, poolSel), h('p', { class: 'muted small' }, 'Erkenne den Fall so schnell wie möglich und tippe auf „Aufdecken“ (oder Leertaste). Danach ehrlich bewerten – Fälle, die du nicht weisst, kommen öfter dran.')),
       h('div', { class: 'card glass' }, h('div', { class: 'card-head' }, h('h3', null, 'Statistik')), this.statsEl),
     );
     ctx.hudTop.append(this.timerEl);
@@ -75,15 +81,37 @@ export class RecogMode implements TrainerMode {
     } else if (this.revealed && (e.key === 'x' || e.key === 'Backspace')) this.rate(false);
   }
 
+  private get active(): AlgSet[] {
+    const p = settings.puzzle;
+    const valid = this.sets[p]?.filter((x) => SETS_BY_PUZZLE[p].includes(x)) ?? [];
+    return valid.length ? valid : [SETS_BY_PUZZLE[p][2]]; // Standard: PLL bzw. CLL
+  }
+
+  /** Kategorien als Chips zum An-/Abwählen – mindestens eine bleibt aktiv */
   private renderTabs() {
     clear(this.setTabs);
-    for (const s of ['F2L', 'OLL', 'PLL'] as AlgSet[]) {
-      this.setTabs.append(h('button', { class: `seg ${s === this.set ? 'active' : ''}`, onclick: () => { this.set = s; this.renderTabs(); this.next(); } }, s));
+    const p = settings.puzzle;
+    const active = this.active;
+    for (const set of SETS_BY_PUZZLE[p]) {
+      const on = active.includes(set);
+      this.setTabs.append(
+        h('button', {
+          class: `chip-btn ${on ? 'active' : ''}`,
+          onclick: () => {
+            const next = on ? active.filter((x) => x !== set) : [...active, set];
+            if (!next.length) return;
+            this.sets = { ...this.sets, [p]: next };
+            storage.set('recogSets', this.sets);
+            this.renderTabs();
+            this.next();
+          },
+        }, SET_LABEL[set]),
+      );
     }
   }
 
   private candidates(): AlgCase[] {
-    const all = ALL_CASES.filter((c) => c.set === this.set);
+    const all = ALL_CASES.filter((c) => this.active.includes(c.set));
     const filtered = all.filter((c) => {
       if (this.pool === 'fav') return progress.isFav(c.id);
       if (this.pool === 'learning') return progress.status(c.id) === 'learning';
@@ -116,19 +144,23 @@ export class RecogMode implements TrainerMode {
     const c = this.pick();
     this.current = c;
     this.revealed = false;
-    const alg = normalizeAlg(preferredAlg(c));
+    const alg = algMoves(c, preferredAlg(c));
     const pre = Math.floor(Math.random() * 4);
     const post = Math.floor(Math.random() * 4);
     // Zufällige Farben (PLL) und zufälliger Blickwinkel (AUF)
-    const start = applyMoves(solvedState(), [...(c.set === 'PLL' ? U(pre) : []), ...invertAlg(alg), ...U(post)]);
-    view.player.load(start, [...U((4 - post) % 4), ...alg]);
+    // Zufällige Farben (PLL/2x2) und zufälliger Blickwinkel (AUF); am Ende wieder ausgerichtet
+    const two = c.puzzle === 2;
+    const preMoves = c.set === 'PLL' ? U(pre) : two && c.set !== '2OLL' ? [...U(pre), ...D(Math.floor(Math.random() * 4))] : [];
+    const start = applyMoves(solvedState(), [...preMoves, ...invertAlg(alg), ...U(post)]);
+    view.setPuzzle(two ? 2 : 3);
+    view.player.load(start, [...U((4 - post) % 4), ...alg, ...invertAlg(preMoves)]);
     view.player.onIndex = null;
     view.look = lookFor(c.set);
     view.showArrows = false;
-    const color = PHASE_COLORS[c.set === 'F2L' ? 'f2l' : c.set === 'OLL' ? 'oll' : 'pll'];
+    const color = PHASE_COLORS[SET_PHASE[c.set]];
     view.setPhaseColor(color);
     view.arrowColor = color;
-    view.resetCamera(c.set === 'F2L' ? 'default' : 'top');
+    view.resetCamera(c.set === 'F2L' || (two && c.set !== '2OLL') ? 'default' : 'top');
     this.shownAt = performance.now();
     view.onFrame = () => {
       if (!this.revealed) this.timerEl.textContent = ((performance.now() - this.shownAt) / 1000).toFixed(2);
@@ -149,7 +181,7 @@ export class RecogMode implements TrainerMode {
     const c = this.current;
     clear(ctx.hudBottom);
     const chips = h('div', { class: 'hud-alg' }, ...view.player.moves.map((m) => h('span', { class: 'hm' }, moveToString(m))));
-    ctx.hudBottom.append(h('div', { class: 'hud-title' }, `${c.set} ${c.key}${c.name ? ` · ${c.name}` : ''}`), chips);
+    ctx.hudBottom.append(h('div', { class: 'hud-title' }, `${caseTitle(c)}${c.name && c.name !== c.key ? ` · ${c.name}` : ''}`), chips);
     view.showArrows = true;
     view.player.onIndex = (i) => chips.querySelectorAll('.hm').forEach((el, k) => { el.classList.toggle('done', k < i); el.classList.toggle('current', k === i); });
     setTimeout(() => this.ctx?.view.player.play(), 300);
@@ -172,7 +204,7 @@ export class RecogMode implements TrainerMode {
 
   private renderStats() {
     clear(this.statsEl);
-    const cases = ALL_CASES.filter((c) => c.set === this.set);
+    const cases = ALL_CASES.filter((c) => this.active.includes(c.set));
     const rows = cases
       .map((c) => ({ c, p: progress.get(c.id) }))
       .filter((r) => (r.p.recogN ?? 0) > 0)
@@ -191,7 +223,7 @@ export class RecogMode implements TrainerMode {
       this.statsEl.append(h('h4', null, 'Schwächste Fälle'));
       for (const r of rows.slice(0, 6)) {
         this.statsEl.append(
-          h('div', { class: 'weak-row' }, h('b', null, `${r.c.set} ${r.c.key}`), h('span', { class: 'muted' }, `${Math.round(r.acc * 100)}% · Ø ${(r.avg / 1000).toFixed(2)} s`), h('button', { class: 'link-btn small', onclick: () => { this.forced = r.c.id; this.next(); } }, 'üben')),
+          h('div', { class: 'weak-row' }, h('b', null, caseTitle(r.c)), h('span', { class: 'muted' }, `${Math.round(r.acc * 100)}% · Ø ${(r.avg / 1000).toFixed(2)} s`), h('button', { class: 'link-btn small', onclick: () => { this.forced = r.c.id; this.next(); } }, 'üben')),
         );
       }
     }

@@ -11,6 +11,7 @@ import { settings } from './settings';
 import { smartCube } from './smartcube/smartcube';
 import { openSettings } from './ui/settingsPanel';
 import { applyAppearance } from './ui/theme';
+import { setPuzzle } from './ui/puzzle';
 
 type TabId = 'solver' | 'algs' | 'trainer' | 'timer';
 interface View {
@@ -92,12 +93,21 @@ const renderCubeChip = () => {
 };
 smartCube.onStatus(renderCubeChip);
 renderCubeChip();
+const puzzleBtn = h('div', { class: 'seg-tabs puzzle-switch', title: 'Puzzle wählen' });
+const renderPuzzleBtn = () => {
+  puzzleBtn.replaceChildren(
+    ...([3, 2] as const).map((p) => h('button', { class: `seg ${settings.puzzle === p ? 'active' : ''}`, onclick: () => setPuzzle(p) }, p === 3 ? '3×3' : '2×2')),
+  );
+};
+renderPuzzleBtn();
+document.addEventListener('puzzle-change', renderPuzzleBtn);
+document.body.dataset.puzzle = String(settings.puzzle);
 const settingsBtn = h('button', { class: 'icon-btn settings-btn', title: 'Einstellungen', 'aria-label': 'Einstellungen', onclick: () => openSettings() }, '⚙');
 
 const viewsEl = h('main', { class: 'views' }, solver.el);
 const app = document.getElementById('app')!;
 app.append(
-  h('header', { class: 'topbar' }, h('div', { class: 'logo' }, h('span', { class: 'logo-cube' }), h('span', null, 'CFOP ', h('b', null, 'Studio'))), makeNav('top-nav'), h('div', { class: 'topbar-right' }, perfHost, cubeChip, settingsBtn)),
+  h('header', { class: 'topbar' }, h('div', { class: 'logo' }, h('span', { class: 'logo-cube' }), h('span', null, 'CFOP ', h('b', null, 'Studio'))), makeNav('top-nav'), h('div', { class: 'topbar-right' }, perfHost, cubeChip, puzzleBtn, settingsBtn)),
   viewsEl,
   makeNav('bottom-nav'),
 );

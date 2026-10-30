@@ -1,11 +1,13 @@
 import { applyMoves, type Move } from '../cube/cube';
-import { formatAlg, randomScramble } from '../cube/notation';
+import { formatAlg } from '../cube/notation';
+import { settings } from '../settings';
+import { scrambleFor } from './puzzle';
 import { storage } from '../util/storage';
 import { WCA_START, smartCube, type SmartMove } from '../smartcube/smartcube';
 import { ScrambleTracker } from '../smartcube/tracker';
 import { MILESTONE_LABEL, SplitTracker, type Milestone } from '../smartcube/splits';
 import { clear, fmtTime, h } from './dom';
-import { netDiagram } from './caseDiagram';
+import { netDiagram, netDiagram2 } from './caseDiagram';
 import { smartCubeCard } from './settingsPanel';
 
 export interface Solve {
@@ -17,6 +19,9 @@ export interface Solve {
   moves?: string;
   splits?: Milestone[];
 }
+
+/** Eigene Session je Puzzle */
+const solvesKey = () => (settings.puzzle === 2 ? 'solves2' : 'solves');
 
 const effective = (s: Solve) => (s.penalty === 'DNF' ? Infinity : s.ms + (s.penalty === '+2' ? 2000 : 0));
 
@@ -34,8 +39,8 @@ export function averageOf(solves: Solve[], n: number): number | null {
  */
 export class TimerView {
   readonly el: HTMLElement;
-  private solves: Solve[] = storage.get('solves', []);
-  private scramble: Move[] = randomScramble();
+  private solves: Solve[] = storage.get(solvesKey(), []);
+  private scramble: Move[] = scrambleFor();
   private display = h('div', { class: 'timer-display mono' }, '0.00');
   private scrambleEl = h('div', { class: 'scramble-text mono big-scramble' });
   private previewEl = h('div', { class: 'timer-preview' });
@@ -44,6 +49,7 @@ export class TimerView {
   private smartEl = h('div', { class: 'smart-timer' });
   private splitsEl = h('div', { class: 'splits' });
   private helpEl = h('div', { class: 'muted small timer-help' });
+  private sessionTitle = h('h3', null, 'Session');
   private state: 'idle' | 'holding' | 'ready' | 'running' = 'idle';
   private holdTimer = 0;
   private startAt = 0;
@@ -84,13 +90,21 @@ export class TimerView {
           this.previewEl,
         ),
         this.pad,
-        h('div', { class: 'card glass' }, h('div', { class: 'card-head' }, h('h3', null, 'Session'), h('button', { class: 'link-btn small', onclick: () => this.clearSession() }, 'Session leeren')), this.statsEl, this.listEl),
+        h('div', { class: 'card glass' }, h('div', { class: 'card-head' }, this.sessionTitle, h('button', { class: 'link-btn small', onclick: () => this.clearSession() }, 'Session leeren')), this.statsEl, this.listEl),
       ),
     );
     window.addEventListener('keyup', (e) => {
       if (this.el.classList.contains('active') && e.code === 'Space' && this.smartPhase === 'off') this.up();
     });
     smartCube.onStatus(() => this.setupSmart());
+    document.addEventListener('puzzle-change', () => {
+      if (this.state === 'running') return;
+      this.solves = storage.get(solvesKey(), []);
+      this.smartPhase = 'off';
+      this.newScramble();
+      this.setupSmart();
+      this.renderStats();
+    });
     smartCube.onMove((ev) => this.onSmartMove(ev));
     this.renderScramble();
     this.renderStats();
@@ -175,8 +189,12 @@ export class TimerView {
     this.tracker?.stop();
     this.tracker = null;
     clear(this.smartEl);
-    if (!smartCube.connected) {
+    if (!smartCube.connected || settings.puzzle === 2) {
       this.smartPhase = 'off';
+      if (settings.puzzle === 2) {
+        this.helpEl.textContent = 'Leertaste halten (oder hier gedrückt halten) → loslassen startet. Beliebige Taste stoppt.';
+        return;
+      }
       this.helpEl.textContent = 'Leertaste halten (oder hier gedrückt halten) → loslassen startet. Beliebige Taste stoppt.';
       this.smartEl.append(h('details', { class: 'smart-connect' }, h('summary', null, '🔵 Mit Smartcube: automatische Splits'), smartCubeCard()));
       return;
@@ -261,7 +279,7 @@ export class TimerView {
   // ------------------------------------------------------------ Allgemein
 
   private save() {
-    storage.set('solves', this.solves.slice(0, 1000));
+    storage.set(solvesKey(), this.solves.slice(0, 1000));
     this.renderStats();
   }
 
@@ -272,19 +290,21 @@ export class TimerView {
   }
 
   private newScramble() {
-    this.scramble = randomScramble();
+    this.scramble = scrambleFor();
     this.renderScramble();
-    if (smartCube.connected && this.smartPhase !== 'running') this.setupSmart();
+    if (smartCube.connected && settings.puzzle === 3 && this.smartPhase !== 'running') this.setupSmart();
   }
 
   private renderScramble() {
     clear(this.scrambleEl);
     this.scrambleEl.append(formatAlg(this.scramble));
     clear(this.previewEl);
-    this.previewEl.append(netDiagram(applyMoves(WCA_START, this.scramble), 220));
+    const st = applyMoves(WCA_START, this.scramble);
+    this.previewEl.append(settings.puzzle === 2 ? netDiagram2(st, 180) : netDiagram(st, 220));
   }
 
   private renderStats() {
+    this.sessionTitle.textContent = `Session ${settings.puzzle === 2 ? '2×2' : '3×3'}`;
     clear(this.statsEl);
     const valid = this.solves.map(effective).filter(isFinite);
     const stat = (label: string, v: number | null) => h('div', { class: 'stat' }, h('b', null, v === null ? '–' : fmtTime(v)), h('span', null, label));

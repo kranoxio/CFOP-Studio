@@ -5,6 +5,7 @@ import { CrossMode } from './trainer/cross';
 import { LookaheadMode } from './trainer/lookahead';
 import type { TrainerContext, TrainerMode } from './trainer/types';
 import { storage } from '../util/storage';
+import { settings } from '../settings';
 
 /** Trainer mit drei Modi: Fall-Erkennung, Kreuz/X-Cross, Lookahead. */
 export class TrainerView {
@@ -35,6 +36,16 @@ export class TrainerView {
       ),
     );
     this.renderTabs();
+    document.addEventListener('puzzle-change', () => {
+      if (settings.puzzle === 2 && this.mode !== this.recog) this.switchMode(this.recog);
+      else if (this.active) this.startMode();
+      this.renderTabs();
+    });
+  }
+
+  /** Kreuz- und Lookahead-Trainer gibt es nur für den 3x3 */
+  private available(m: TrainerMode) {
+    return settings.puzzle === 3 || m === this.recog;
   }
 
   /** Einen bestimmten Fall im Erkennungs-Trainer zeigen. */
@@ -50,6 +61,10 @@ export class TrainerView {
     }
     this.view.setRunning(true);
     this.active = true;
+    if (!this.available(this.mode)) {
+      this.mode = this.recog;
+      this.renderTabs();
+    }
     this.startMode();
   }
 
@@ -77,6 +92,7 @@ export class TrainerView {
     if (!this.view) return;
     for (const el of [this.hudTop, this.hudBottom, this.actions, this.side]) clear(el);
     const v = this.view;
+    v.setPuzzle(settings.puzzle);
     v.player.pause();
     v.player.onIndex = null;
     v.player.onFinish = null;
@@ -89,6 +105,7 @@ export class TrainerView {
   private renderTabs() {
     clear(this.modeTabs);
     for (const m of this.modes) {
+      if (!this.available(m)) continue;
       this.modeTabs.append(h('button', { class: `seg ${m === this.mode ? 'active' : ''}`, onclick: () => this.switchMode(m) }, m.label));
     }
   }

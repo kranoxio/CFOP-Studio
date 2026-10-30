@@ -3,6 +3,7 @@ import { smartCube } from '../smartcube/smartcube';
 import { perf } from '../render/perf';
 import { setAlgStyle } from '../algs/registry';
 import { applyAppearance } from './theme';
+import { setPuzzle } from './puzzle';
 import { clear, h, modal, toast } from './dom';
 
 type Option<T> = [T, string];
@@ -108,6 +109,13 @@ export function openSettings() {
         settings.oneHand = v;
         saveSettings();
         applyAppearance();
+      })),
+      h('h4', null, 'Puzzle'),
+      row('Würfel', '3×3 (CFOP) oder 2×2', segmented(String(settings.puzzle) as '3' | '2', [['3', '3×3'], ['2', '2×2']], (v) => setPuzzle(v === '2' ? 2 : 3))),
+      row('2×2-Methode', 'Bestimmt, welche Alg-Kategorien der 2×2-Solver nutzt: Ortega = OLL + PBL, CLL = erste Ebene + CLL, EG = erste Seite + CLL/EG-1/EG-2', segmented(settings.method2, [['ortega', 'Ortega'], ['cll', 'CLL'], ['eg', 'EG']], (v) => {
+        settings.method2 = v;
+        saveSettings();
+        document.dispatchEvent(new CustomEvent('method2-change'));
       })),
       h('h4', null, 'Algorithmen'),
       row('Alg-Set', 'OH = einhändige Algs für OLL und PLL (F2L bleibt gleich). Gilt für Solver, Raster und Trainer.', segmented(settings.algStyle, [['2h', 'Zweihändig'], ['oh', 'OH']], (v) => {

@@ -2,14 +2,17 @@ import { applyMoves, moveToString, solvedState, type Move, type State } from '..
 import { smartCube, sameColors } from '../smartcube/smartcube';
 import { reconstructionSteps } from '../smartcube/splits';
 import type { Solve } from './timerView';
-import { conjugateAlg, formatAlg, htm, invertAlg, parseAlg, randomScramble, simplify, tryParseAlg } from '../cube/notation';
+import { conjugateAlg, formatAlg, htm, invertAlg, parseAlg, simplify, tryParseAlg } from '../cube/notation';
 import type { Solution, SolveStep } from '../solver/cfop';
-import { solveAsync } from '../solver/client';
+import { callSolver, solveAsync } from '../solver/client';
+import { CASE_BY_ID, caseTitle } from '../algs/data';
 import { CubeView } from '../render/CubeView';
 import { moveWeight } from '../render/MovePlayer';
 import { settings, saveSettings } from '../settings';
 import { clear, h, modal, toast } from './dom';
-import { llDiagram } from './caseDiagram';
+import { llDiagram, llDiagram2 } from './caseDiagram';
+import { scrambleFor } from './puzzle';
+import { METHOD2_LABEL, type Method2 } from '../solver/cube2';
 import { PHASE_COLORS, PHASE_LABELS } from './phases';
 
 const CENTERS = [4, 13, 22, 31, 40, 49];
@@ -181,19 +184,17 @@ export class SolverView {
       }) as HTMLInputElement;
       return h('label', { class: 'toggle', title }, input, h('span', { class: 'toggle-ui' }), label);
     };
-    const modeSel = (this.modeSel = h(
-      'select',
-      {
-        class: 'select',
-        onchange: () => {
-          settings.f2lMode = modeSel.value as 'alg' | 'optimal';
-          saveSettings();
-          if (!this.source.steps) this.solve(this.scramble, false, { base: this.source.base });
-        },
+    const modeSel = (this.modeSel = h('select', {
+      class: 'select',
+      title: 'Methode bzw. verwendete Alg-Kategorien',
+      onchange: () => {
+        if (settings.puzzle === 2) settings.method2 = modeSel.value as Method2;
+        else settings.f2lMode = modeSel.value as 'alg' | 'optimal';
+        saveSettings();
+        if (!this.source.steps) this.solve(this.scramble, false, { base: this.source.base });
       },
-      h('option', { value: 'alg', selected: settings.f2lMode === 'alg' }, 'F2L: 41 Standard-Algs'),
-      h('option', { value: 'optimal', selected: settings.f2lMode === 'optimal' }, 'F2L: Computer-optimal'),
-    ) as HTMLSelectElement);
+    }) as HTMLSelectElement);
+    this.fillModeOptions();
 
     return h(
       'aside',
@@ -235,12 +236,46 @@ export class SolverView {
     );
   }
 
+  /** Optionen der Methoden-Auswahl: 3x3 = F2L-Stil, 2x2 = Methode (Ortega / CLL / EG) */
+  private fillModeOptions() {
+    const sel = this.modeSel;
+    sel.replaceChildren(
+      ...(settings.puzzle === 2
+        ? (Object.keys(METHOD2_LABEL) as Method2[]).map((m) => h('option', { value: m, selected: settings.method2 === m }, METHOD2_LABEL[m]))
+        : [
+            h('option', { value: 'alg', selected: settings.f2lMode === 'alg' }, 'F2L: 41 Standard-Algs'),
+            h('option', { value: 'optimal', selected: settings.f2lMode === 'optimal' }, 'F2L: Computer-optimal'),
+          ]),
+    );
+  }
+
+  /** Wechsel zwischen 3x3 und 2x2 */
+  private onPuzzleChange() {
+    this.fillModeOptions();
+    this.updateLiveBar();
+    if (!this.view) return;
+    this.view.setPuzzle(settings.puzzle);
+    this.newScramble();
+  }
+
+  /** Löst je nach Puzzle mit dem 3x3-CFOP- oder dem 2x2-Solver */
+  private runSolver(state: State) {
+    return settings.puzzle === 2
+      ? callSolver('solve2', state, settings.method2).then((r) => ({ solution: r.result, ms: r.ms }))
+      : solveAsync(state, { f2lMode: settings.f2lMode });
+  }
+
   // ------------------------------------------------------------ Lebenszyklus
 
   activate() {
     if (!this.view) {
       document.addEventListener('alg-style-change', () => !this.source.steps && this.solution && this.solve(this.scramble, false, { base: this.source.base }));
-      this.view = new CubeView(this.stageSlot, { intro: true });
+      this.view = new CubeView(this.stageSlot, { intro: true, size: settings.puzzle });
+      document.addEventListener('puzzle-change', () => this.onPuzzleChange());
+      document.addEventListener('method2-change', () => {
+        this.fillModeOptions();
+        if (settings.puzzle === 2 && !this.source.steps && this.solution) this.solve(this.scramble, false, { base: this.source.base });
+      });
       this.stageSlot.prepend(this.view.renderer.domElement);
       const p = this.view.player;
       p.onIndex = (i) => this.onIndex(i);
@@ -251,7 +286,7 @@ export class SolverView {
       this.applyViewSettings();
       const fromHash = this.scrambleFromHash();
       // Intro abwarten, dann scramblen
-      setTimeout(() => this.solve(fromHash ?? randomScramble(), true), fromHash ? 900 : 1500);
+      setTimeout(() => this.solve(fromHash ?? scrambleFor(), true), fromHash ? 900 : 1500);
     }
     this.view.setRunning(true);
   }
@@ -281,7 +316,7 @@ export class SolverView {
   // ------------------------------------------------------------ Logik
 
   newScramble() {
-    this.solve(randomScramble(), true);
+    this.solve(scrambleFor(), true);
   }
 
   /** Lädt einen Scramble (aus Timer o.ä.) und zeigt die Lösung. */
@@ -323,14 +358,14 @@ export class SolverView {
     this.lastIndex = -1;
     this.activeSeg = -1;
     this.onIndex(p.index);
-    if (scramble.length) history.replaceState(null, '', `#scramble=${encodeURIComponent(formatAlg(scramble))}`);
+    if (scramble.length) history.replaceState(null, '', `#${settings.puzzle === 2 ? 'p=2&' : ''}scramble=${encodeURIComponent(formatAlg(scramble))}`);
 
     let solution: Solution;
     let ms: number | null = null;
     if (opts.steps) {
       solution = { steps: opts.steps, moveCount: opts.steps.reduce((n, st) => n + htm(st.moves), 0) };
     } else {
-      const res = await solveAsync(applyMoves(base, scramble), { f2lMode: settings.f2lMode });
+      const res = await this.runSolver(applyMoves(base, scramble));
       solution = res.solution;
       ms = res.ms;
     }
@@ -350,7 +385,7 @@ export class SolverView {
     this.onIndex(p.index);
     if (opts.compare) {
       // Vergleich mit der Solver-Lösung desselben Scrambles
-      const res = await solveAsync(applyMoves(base, scramble), { f2lMode: settings.f2lMode });
+      const res = await this.runSolver(applyMoves(base, scramble));
       if (token === this.solveToken) this.statsEl.append(h('div', { class: 'compare-line' }, `Solver (CFOP mit Standard-Algs): ${res.solution.moveCount} Züge · du: ${solution.moveCount} Züge`));
     }
   }
@@ -369,7 +404,7 @@ export class SolverView {
   // ------------------------------------------------------------ Smartcube live
 
   private updateLiveBar() {
-    this.liveBar.style.display = smartCube.connected ? '' : 'none';
+    this.liveBar.style.display = smartCube.connected && settings.puzzle === 3 ? '' : 'none';
     if (!smartCube.connected && this.live) this.setLive(false);
     this.liveBar.querySelector('.live-toggle')?.classList.toggle('active', this.live);
   }
@@ -437,6 +472,14 @@ export class SolverView {
   private scrambleFromHash(): Move[] | null {
     const m = location.hash.match(/scramble=([^&]+)/);
     if (!m) return null;
+    // Geteilte 2x2-Links öffnen direkt im 2x2-Modus
+    const p = /[#&]p=2(&|$)/.test(location.hash) ? 2 : 3;
+    if (p !== settings.puzzle) {
+      settings.puzzle = p;
+      saveSettings();
+      this.view?.setPuzzle(p);
+      document.dispatchEvent(new CustomEvent('puzzle-change', { detail: p }));
+    }
     const moves = tryParseAlg(decodeURIComponent(m[1]));
     return moves && moves.length ? moves : null;
   }
@@ -737,8 +780,10 @@ export class SolverView {
       if (!st.moves.length) chips.append(h('span', { class: 'muted small' }, 'keine Züge nötig'));
 
       let diagram: SVGSVGElement | null = null;
-      if ((st.phase === 'oll' || st.phase === 'pll') && st.method === 'alg') {
+      if (settings.puzzle === 3 && (st.phase === 'oll' || st.phase === 'pll') && st.method === 'alg') {
         diagram = llDiagram(p.states[seg.start + st.aufCount], st.phase, 64);
+      } else if (settings.puzzle === 2 && st.method === 'alg') {
+        diagram = llDiagram2(p.states[seg.start + st.aufCount], st.phase === 'oll' ? 'oll' : 'all', 64);
       }
       const card = h(
         'div',
@@ -767,7 +812,7 @@ export class SolverView {
                 class: 'link-btn small',
                 onclick: () => document.dispatchEvent(new CustomEvent('open-case', { detail: st.caseId })),
               },
-              `${st.caseId.replace('-', ' ')} in der Sammlung öffnen →`,
+              `${caseTitle(CASE_BY_ID.get(st.caseId)!)} in der Sammlung öffnen →`,
             )
           : null,
       );

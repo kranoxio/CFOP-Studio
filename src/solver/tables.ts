@@ -22,7 +22,7 @@ export const FWD: Uint8Array[] = SEARCH_MOVES.map((m) => {
 });
 
 const EDGE_LIST: number[] = [];
-const CORNER_LIST: number[] = [];
+export const CORNER_LIST: number[] = [];
 for (let i = 0; i < 54; i++) {
   const k = i % 9;
   if (k === 4) continue;

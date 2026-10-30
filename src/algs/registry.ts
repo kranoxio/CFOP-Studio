@@ -2,6 +2,7 @@ import { applyMoves, solvedState, type Move, type State } from '../cube/cube';
 import { f2lSolved, ollSolved, isSolved, SLOTS, slotSolved, crossSolved } from '../cube/analysis';
 import { formatAlg, invertAlg, netRotationFix, parseAlg, removeRotations, tryParseAlg } from '../cube/notation';
 import { ALL_CASES, CASE_BY_ID, type AlgCase } from './data';
+import { bottomFace, cornersHome, normalizeAlg2, toCornerMoves, topOriented } from '../cube/cube2';
 import { OH_ALGS } from './oh';
 import { storage } from '../util/storage';
 
@@ -75,9 +76,34 @@ export function getCase(id: string): AlgCase {
   return c;
 }
 
+/** Züge eines Algs für diesen Fall (2x2: nur Eckenwirkung, ohne Slices). */
+export function algMoves(c: AlgCase, text: string): Move[] {
+  return c.puzzle === 2 ? normalizeAlg2(text) : normalizeAlg(text);
+}
+
 /** Zustand, den ein Fall vor Ausführung des Algs darstellt. */
 export function caseState(c: AlgCase, alg = preferredAlg(c)): State {
-  return applyMoves(solvedState(), invertAlg(normalizeAlg(alg)));
+  return applyMoves(solvedState(), invertAlg(algMoves(c, alg)));
+}
+
+const U_ADJ: Move[][] = [[], [{ base: 'U', amount: 1 }], [{ base: 'U', amount: 2 }], [{ base: 'U', amount: 3 }]];
+const D_ADJ: Move[][] = [[], [{ base: 'D', amount: 1 }], [{ base: 'D', amount: 2 }], [{ base: 'D', amount: 3 }]];
+/** Alle Kombinationen aus U- und D-Ausrichtung (für 2x2) */
+export const UD_ADJ: Move[][] = U_ADJ.flatMap((u) => D_ADJ.map((d) => [...u, ...d]));
+
+function validate2(c: AlgCase, moves: Move[]): ValidationResult {
+  const start = caseState(c, c.algs[0]);
+  const fixed = toCornerMoves(moves);
+  for (const pre of UD_ADJ) {
+    const mid = applyMoves(start, [...pre, ...fixed]);
+    for (const post of UD_ADJ) {
+      const end = applyMoves(mid, post);
+      const good = c.set === '2OLL' ? topOriented(end) && bottomFace(end) : cornersHome(end);
+      if (good) return { ok: true, message: `Alg löst den Fall${pre.length ? ` (mit ${formatAlg(pre)} davor)` : ''}` };
+      if (c.set === '2OLL') break; // Für OLL spielt die Ausrichtung danach keine Rolle
+    }
+  }
+  return { ok: false, message: 'Alg löst diesen Fall nicht' };
 }
 
 export interface ValidationResult {
@@ -89,6 +115,7 @@ export interface ValidationResult {
 export function validateAlg(c: AlgCase, text: string): ValidationResult {
   const moves = tryParseAlg(text);
   if (!moves || moves.length === 0) return { ok: false, message: 'Notation nicht lesbar' };
+  if (c.puzzle === 2) return validate2(c, moves);
   const start = caseState(c, c.algs[0]);
   const fixed = [...moves, ...netRotationFix(moves)];
   const aufs: Move[][] = [[], [{ base: 'U', amount: 1 }], [{ base: 'U', amount: 2 }], [{ base: 'U', amount: 3 }]];

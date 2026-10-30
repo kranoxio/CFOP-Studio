@@ -20,6 +20,13 @@ Läuft auf Desktop und Handy.
   Splits für Kreuz, jedes F2L-Paar, OLL und PLL, Rekonstruktion jedes Solves mit erkannten OLL/PLL-Fällen
   und Vergleich mit dem Solver. Im Solver folgt der 3D-Würfel deinem echten Würfel („Mitverfolgen“), und
   „Meinen Würfel lösen“ löst den aktuellen Zustand. Ohne Würfel lässt sich alles mit dem Tastatur-Simulator testen.
+- **2×2-Modus** (Umschalter oben rechts): eigener 2×2-Würfel, Solver mit wählbarer Methode
+  - *Ortega*: erste Seite (optimal) → OLL (7) → PBL (8)
+  - *CLL*: erste Ebene (optimal) → CLL (42)
+  - *EG*: erste Seite (optimal) → je nach unterer Ebene CLL, EG-1 (40) oder EG-2 (40)
+
+  Die Sammlung zeigt die 2×2-Kategorien OLL, PBL, CLL, EG-1, EG-2; im Trainer lassen sich beliebige
+  Kategorien kombinieren (z. B. nur EG-1 + EG-2). Timer mit 2×2-Scrambles und eigener Session.
 - **Einstellungen (⚙)**: Hell/Dunkel/Auto, Einhand-Modus (Daumen-Layout links oder rechts), Alg-Set zweihändig oder OH
   (einhändige OLL/PLL-Algs), Leistungsanzeige.
 
@@ -69,6 +76,6 @@ Update: im Stack auf **Pull and redeploy** klicken.
 ```bash
 npm install
 npm run dev     # Entwicklungsserver
-npm test        # prüft alle 119 Algs (+ 78 OH-Algs), Solver, Splits und Wiedergabe
+npm test        # prüft alle 3×3-Algs (+ OH), 177 2×2-Algs, beide Solver, Splits und Wiedergabe
 npm run build   # Produktions-Build nach dist/
 ```

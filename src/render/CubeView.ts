@@ -12,6 +12,8 @@ export interface CubeViewOptions {
   interactive?: boolean;
   intro?: boolean;
   cameraDistance?: number;
+  /** 3 = 3x3 (Standard), 2 = 2x2 */
+  size?: 2 | 3;
 }
 
 function radialTexture(stops: [number, string][]) {
@@ -47,7 +49,8 @@ export class CubeView {
   readonly scene = new THREE.Scene();
   readonly camera: THREE.PerspectiveCamera;
   readonly controls: OrbitControls | null = null;
-  readonly model: CubeModel;
+  model: CubeModel;
+  private quality: Quality;
   readonly player = new MovePlayer();
   look: ((home: number) => StickerLook) | undefined;
   autoRotate = false;
@@ -103,7 +106,8 @@ export class CubeView {
     rim.position.set(-6, 2, -5);
     this.scene.add(key, rim, new THREE.AmbientLight('#ffffff', 0.25));
 
-    this.model = new CubeModel(opts.quality ?? 'high');
+    this.quality = opts.quality ?? 'high';
+    this.model = new CubeModel(this.quality, opts.size ?? 3);
     this.scene.add(this.model.root);
 
     // weicher Kontaktschatten
@@ -178,6 +182,15 @@ export class CubeView {
   }
 
   invalidate() {
+    this.dirty = true;
+  }
+
+  /** Wechselt zwischen 3x3 und 2x2 (Modell wird ausgetauscht, Wiedergabe bleibt). */
+  setPuzzle(size: 2 | 3) {
+    if (this.model.size === size) return;
+    this.scene.remove(this.model.root);
+    this.model = new CubeModel(this.quality, size);
+    this.scene.add(this.model.root);
     this.dirty = true;
   }
 
