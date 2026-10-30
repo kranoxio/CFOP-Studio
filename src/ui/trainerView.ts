@@ -5,7 +5,7 @@ import { normalizeAlg, preferredAlg } from '../algs/registry';
 import { CubeView } from '../render/CubeView';
 import { progress } from '../progress';
 import { clear, h } from './dom';
-import { lookFor } from './algsView';
+import { lookFor } from './looks';
 import { PHASE_COLORS } from './phases';
 
 type Pool = 'all' | 'fav' | 'learning' | 'notLearned';
@@ -56,11 +56,16 @@ export class TrainerView {
         ),
       ),
     );
-    document.addEventListener('train-case', (e) => {
-      const id = (e as CustomEvent<string>).detail;
-      this.set = id.split('-')[0] as AlgSet;
-      this.forced = id;
-    });
+  }
+
+  /** Einen bestimmten Fall als Nächstes zeigen. */
+  train(id: string) {
+    this.set = id.split('-')[0] as AlgSet;
+    this.forced = id;
+    if (this.view) {
+      this.renderTabs();
+      this.next();
+    }
   }
 
   activate() {

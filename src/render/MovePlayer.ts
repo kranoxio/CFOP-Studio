@@ -47,6 +47,14 @@ export class MovePlayer {
     this.onIndex?.(this.index);
   }
 
+  /** Hängt Züge an, ohne die laufende Wiedergabe zu unterbrechen. */
+  extend(moves: Move[]) {
+    for (const m of moves) {
+      this.moves.push(m);
+      this.states.push(applyMove(this.states[this.states.length - 1], m));
+    }
+  }
+
   get state() {
     return this.states[this.index];
   }
@@ -57,6 +65,11 @@ export class MovePlayer {
 
   get animating() {
     return this.progress > 0;
+  }
+
+  /** Fortschritt als eine Zahl (Index + Anteil des laufenden Zuges) – für Änderungserkennung. */
+  get position() {
+    return this.index + this.progress;
   }
 
   play() {

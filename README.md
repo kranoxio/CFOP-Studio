@@ -16,6 +16,11 @@ Läuft auf Desktop und Handy.
 
 Fortschritt, eigene Algs und Zeiten werden im Browser gespeichert (localStorage).
 
+Die App lässt sich auf iPhone/iPad über *Teilen → Zum Home-Bildschirm* wie eine eigene App installieren
+und funktioniert nach dem ersten Besuch auch offline. Das ⚡ oben rechts blendet eine Leistungsanzeige ein
+(gezeichnete Bilder pro Sekunde, längstes Bild, Draw Calls, Auflösungsfaktor). Im Stillstand zeigt sie 0 FPS,
+denn gezeichnet wird nur, wenn sich etwas bewegt.
+
 ## Auf dem NAS mit Portainer
 
 Bei jedem Push baut GitHub Actions ein Docker-Image (amd64 + arm64) nach `ghcr.io/kranoxio/cfop-studio:latest`.

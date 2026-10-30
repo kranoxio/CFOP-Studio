@@ -12,6 +12,7 @@ export interface Settings {
   gridAnimate: boolean;
   gridTps: number;
   inspection: boolean;
+  showPerf: boolean;
 }
 
 const DEFAULTS: Settings = {
@@ -26,6 +27,7 @@ const DEFAULTS: Settings = {
   gridAnimate: true,
   gridTps: 3,
   inspection: false,
+  showPerf: false,
 };
 
 export const settings: Settings = { ...DEFAULTS, ...storage.get<Partial<Settings>>('settings', {}) };

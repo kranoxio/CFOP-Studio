@@ -1,6 +1,7 @@
 import { applyMoves, moveToString, solvedState, type Move, type State } from '../cube/cube';
 import { formatAlg, htm, parseAlg, randomScramble, tryParseAlg } from '../cube/notation';
-import { solveCFOP, type Solution, type SolveStep } from '../solver/cfop';
+import type { Solution, SolveStep } from '../solver/cfop';
+import { solveAsync } from '../solver/client';
 import { CubeView } from '../render/CubeView';
 import { moveWeight } from '../render/MovePlayer';
 import { settings, saveSettings } from '../settings';
@@ -255,35 +256,51 @@ export class SolverView {
     this.solve(moves, true);
   }
 
-  private solve(scramble: Move[], animateScramble: boolean) {
-    if (!this.view) return;
-    this.scramble = scramble;
-    const scrambled = applyMoves(WCA_START, scramble);
-    const t0 = performance.now();
-    this.solution = solveCFOP(scrambled, { f2lMode: settings.f2lMode });
-    const solveMs = performance.now() - t0;
+  private solveToken = 0;
 
-    const all: Move[] = [...scramble];
-    this.segments = [{ kind: 'scramble', stepIndex: -1, start: 0, end: scramble.length }];
-    this.solution.steps.forEach((st, i) => {
-      this.segments.push({ kind: 'step', step: st, stepIndex: i, start: all.length, end: all.length + st.moves.length });
-      all.push(...st.moves);
-    });
+  /**
+   * Startet sofort mit dem Verdrehen; die Lösung wird parallel im Web Worker berechnet
+   * und an die laufende Wiedergabe angehängt.
+   */
+  private async solve(scramble: Move[], animateScramble: boolean) {
+    if (!this.view) return;
+    const token = ++this.solveToken;
+    this.scramble = scramble;
+    this.solution = null;
     this.scrambleLen = scramble.length;
+    this.segments = [{ kind: 'scramble', stepIndex: -1, start: 0, end: scramble.length }];
     const p = this.view.player;
-    p.load(WCA_START, all, animateScramble ? 0 : this.scrambleLen);
+    p.load(WCA_START, [...scramble], animateScramble ? 0 : this.scrambleLen);
     this.solveTime = 0;
     this.renderScramble();
     this.renderSteps();
-    this.renderStats(solveMs);
+    clear(this.statsEl);
+    this.statsEl.append(h('div', { class: 'muted small' }, 'Lösung wird berechnet …'));
     if (animateScramble) {
       p.stopAt = this.scrambleLen;
       p.play();
     }
     this.applySpeed();
     this.lastIndex = -1;
+    this.activeSeg = -1;
     this.onIndex(p.index);
     history.replaceState(null, '', `#scramble=${encodeURIComponent(formatAlg(scramble))}`);
+
+    const { solution, ms } = await solveAsync(applyMoves(WCA_START, scramble), { f2lMode: settings.f2lMode });
+    if (token !== this.solveToken) return; // inzwischen neuer Scramble
+    this.solution = solution;
+    const added: Move[] = [];
+    let pos = scramble.length;
+    solution.steps.forEach((st, i) => {
+      this.segments.push({ kind: 'step', step: st, stepIndex: i, start: pos, end: pos + st.moves.length });
+      added.push(...st.moves);
+      pos += st.moves.length;
+    });
+    p.extend(added);
+    this.renderSteps();
+    this.renderStats(ms);
+    this.activeSeg = -1;
+    this.onIndex(p.index);
   }
 
   private scrambleFromHash(): Move[] | null {
@@ -343,6 +360,7 @@ export class SolverView {
       if (p.index === this.scrambleLen) this.solveTime = 0;
       p.stopAt = p.index < this.scrambleLen ? this.scrambleLen : null;
       p.play();
+      if (p.index >= this.scrambleLen) this.hud.hint.textContent = '';
     }
     this.applySpeed();
     this.updatePlayBtn();
@@ -432,11 +450,8 @@ export class SolverView {
     if (settings.stopAfterStep && p.playing && index > this.scrambleLen && index > prevIndex && this.segments.some((s) => s.start === index)) {
       p.pause();
     }
-    if (index === this.scrambleLen && prevIndex < index && prevIndex >= 0) {
-      this.hud.hint.textContent = 'Bereit! ▶ drücken zum Lösen';
-    } else {
-      this.hud.hint.textContent = '';
-    }
+    const ready = index === this.scrambleLen && !!this.solution && (!p.playing || p.stopAt === this.scrambleLen);
+    this.hud.hint.textContent = ready ? 'Bereit! ▶ drücken zum Lösen' : '';
     if (index <= this.scrambleLen) this.solveTime = 0;
     this.applySpeed();
 

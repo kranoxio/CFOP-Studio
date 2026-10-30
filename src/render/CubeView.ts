@@ -2,11 +2,12 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { MOVE_DEFS, type Move } from '../cube/cube';
-import { CubeModel, FACE_COLORS, type StickerLook } from './CubeModel';
+import { CubeModel, FACE_COLORS, type Quality, type StickerLook } from './CubeModel';
 import { MovePlayer } from './MovePlayer';
+import { perf } from './perf';
 
 export interface CubeViewOptions {
-  quality?: 'high' | 'low';
+  quality?: Quality;
   interactive?: boolean;
   intro?: boolean;
   cameraDistance?: number;
@@ -31,7 +32,15 @@ const easeOutBack = (t: number) => {
   return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
 };
 
-/** Grosse, interaktive 3D-Ansicht mit frei schwenkbarer Kamera. */
+const IDENTITY = new THREE.Quaternion();
+const MAX_PIXEL_RATIO = 2;
+const MIN_PIXEL_RATIO = 1;
+
+/**
+ * Grosse, interaktive 3D-Ansicht mit frei schwenkbarer Kamera.
+ * Gezeichnet wird nur, wenn sich etwas verändert (Zug, Kamera, Effekte) – im Stillstand
+ * verbraucht die Ansicht praktisch keine Leistung.
+ */
 export class CubeView {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
@@ -42,6 +51,7 @@ export class CubeView {
   look: ((home: number) => StickerLook) | undefined;
   autoRotate = false;
   showArrows = true;
+  arrowColor = '#ffffff';
   onFrame: ((dt: number) => void) | null = null;
 
   private container: HTMLElement;
@@ -49,8 +59,9 @@ export class CubeView {
   private glow: THREE.Mesh;
   private glowColor = new THREE.Color('#5ac8fa');
   private glowTarget = new THREE.Color('#5ac8fa');
-  private arrow: THREE.Group;
-  private arrowMat: THREE.MeshBasicMaterial;
+  private arrow = new THREE.Group();
+  private arrowMat = new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.9, depthTest: false });
+  private lastArrowKey = '';
   private introT = -1;
   private introFrom: { p: THREE.Vector3; q: THREE.Quaternion }[] = [];
   private particles: THREE.Points | null = null;
@@ -59,13 +70,17 @@ export class CubeView {
   private spin = 0;
   private running = true;
   private visible = true;
+  private dirty = true;
   private resizeObs: ResizeObserver;
-  private defaultCam: THREE.Vector3;
+  private camTween: { from: THREE.Vector3; to: THREE.Vector3; t: number } | null = null;
+  private pixelRatio: number;
+  private slowTime = 0;
 
   constructor(container: HTMLElement, opts: CubeViewOptions = {}) {
     this.container = container;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.pixelRatio = Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO);
+    this.renderer.setPixelRatio(this.pixelRatio);
     this.renderer.toneMapping = THREE.NeutralToneMapping;
     this.renderer.toneMappingExposure = 1.05;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -74,20 +89,18 @@ export class CubeView {
 
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    pmrem.dispose();
 
     const dist = opts.cameraDistance ?? 9.2;
     this.camera = new THREE.PerspectiveCamera(32, 1, 0.1, 100);
-    this.defaultCam = new THREE.Vector3(0.62, 0.55, 1).normalize().multiplyScalar(dist);
-    this.camera.position.copy(this.defaultCam);
+    this.camera.position.set(0.62, 0.55, 1).normalize().multiplyScalar(dist);
     this.camera.lookAt(0, 0, 0);
 
     const key = new THREE.DirectionalLight('#ffffff', 1.1);
     key.position.set(4, 8, 6);
-    this.scene.add(key);
     const rim = new THREE.DirectionalLight('#9ec5ff', 0.5);
     rim.position.set(-6, 2, -5);
-    this.scene.add(rim);
-    this.scene.add(new THREE.AmbientLight('#ffffff', 0.25));
+    this.scene.add(key, rim, new THREE.AmbientLight('#ffffff', 0.25));
 
     this.model = new CubeModel(opts.quality ?? 'high');
     this.scene.add(this.model.root);
@@ -118,11 +131,9 @@ export class CubeView {
     );
     this.glow.rotation.x = -Math.PI / 2;
     this.glow.position.y = -2.12;
+    this.glow.scale.setScalar(0.85);
     this.scene.add(this.glow);
 
-    // Zug-Pfeil
-    this.arrowMat = new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.9, depthTest: false });
-    this.arrow = new THREE.Group();
     this.arrow.renderOrder = 10;
     this.scene.add(this.arrow);
 
@@ -135,6 +146,7 @@ export class CubeView {
       c.maxDistance = 18;
       c.rotateSpeed = 0.85;
       c.autoRotateSpeed = 1.2;
+      c.addEventListener('change', () => (this.dirty = true));
       (this as { controls: OrbitControls | null }).controls = c;
     }
 
@@ -147,8 +159,22 @@ export class CubeView {
     document.addEventListener('visibilitychange', () => {
       this.visible = document.visibilityState === 'visible';
       this.clock.getDelta();
+      this.dirty = true;
     });
     this.renderer.setAnimationLoop(() => this.tick());
+  }
+
+  /** Hängt die Ansicht in einen anderen Container (z.B. ein neu geöffnetes Modal). */
+  mount(container: HTMLElement) {
+    this.resizeObs.unobserve(this.container);
+    this.container = container;
+    container.prepend(this.renderer.domElement);
+    this.resizeObs.observe(container);
+    this.resize();
+  }
+
+  invalidate() {
+    this.dirty = true;
   }
 
   resize() {
@@ -159,6 +185,7 @@ export class CubeView {
     // Auf schmalen Bildschirmen etwas weiter weg, damit der Würfel ganz sichtbar bleibt
     this.camera.fov = w / h < 0.8 ? 40 : 32;
     this.camera.updateProjectionMatrix();
+    this.dirty = true;
   }
 
   resetCamera(view: 'default' | 'top' | 'back' | 'bottom' = 'default') {
@@ -171,7 +198,6 @@ export class CubeView {
     };
     this.camTween = { from: this.camera.position.clone(), to: dirs[view].normalize().multiplyScalar(d), t: 0 };
   }
-  private camTween: { from: THREE.Vector3; to: THREE.Vector3; t: number } | null = null;
 
   setPhaseColor(hex: string) {
     this.glowTarget.set(hex);
@@ -179,13 +205,16 @@ export class CubeView {
 
   setRunning(on: boolean) {
     this.running = on;
-    if (on) this.clock.getDelta();
+    if (on) {
+      this.clock.getDelta();
+      this.dirty = true;
+    }
   }
 
   startIntro() {
     this.introT = 0;
     this.introFrom = [];
-    this.model.forEachCubie((_g, home) => {
+    this.model.forEachCubie((_c, home) => {
       const dir = home.clone().normalize();
       const p = dir.multiplyScalar(5 + Math.random() * 6).add(new THREE.Vector3((Math.random() - 0.5) * 4, 3 + Math.random() * 4, (Math.random() - 0.5) * 4));
       const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.random() * 6, Math.random() * 6, Math.random() * 6));
@@ -221,6 +250,9 @@ export class CubeView {
   }
 
   private updateArrow(move: Move | null, color: string) {
+    for (const child of this.arrow.children) {
+      child.traverse((o) => (o as THREE.Mesh).geometry?.dispose());
+    }
     this.arrow.clear();
     if (!move || !this.showArrows) return;
     const def = MOVE_DEFS[move.base];
@@ -254,32 +286,35 @@ export class CubeView {
     this.arrow.add(holder);
   }
 
-  private lastArrowKey = '';
-  arrowColor = '#ffffff';
-
   private tick() {
     if (!this.running || !this.visible) return;
     const dt = Math.min(this.clock.getDelta(), 0.1);
+    let needs = this.dirty;
+    this.dirty = false;
+
     this.player.update(dt);
     this.onFrame?.(dt);
 
     const f = this.player.frame();
-    this.model.paint({ state: f.state, look: this.look });
+    if (this.model.paint({ state: f.state, look: this.look })) needs = true;
 
     if (this.introT >= 0) {
       this.introT += dt / 1.6;
       let done = true;
-      this.model.forEachCubie((g, home, i) => {
+      this.model.forEachCubie((c, home, i) => {
         const delay = (i % 9) * 0.03 + Math.floor(i / 9) * 0.06;
         const t = Math.min(1, Math.max(0, (this.introT - delay) / (1 - 0.3)));
         if (t < 1) done = false;
         const e = easeOutBack(t);
-        g.position.copy(this.introFrom[i].p).lerp(home, e);
-        g.quaternion.copy(this.introFrom[i].q).slerp(new THREE.Quaternion(), Math.min(1, e));
+        c.position.copy(this.introFrom[i].p).lerp(home, e);
+        c.quaternion.copy(this.introFrom[i].q).slerp(IDENTITY, Math.min(1, e));
       });
+      this.model.commit();
       if (done) this.introT = -1;
+      needs = true;
     } else {
       this.model.setTurn(f.move, f.progress);
+      if (f.move) needs = true;
     }
 
     // Pfeil für den nächsten (bzw. laufenden) Zug
@@ -288,19 +323,30 @@ export class CubeView {
     if (key !== this.lastArrowKey) {
       this.lastArrowKey = key;
       this.updateArrow(nextMove, this.arrowColor);
+      needs = true;
     }
     this.arrowMat.opacity = f.move ? 0.35 + 0.5 * (1 - f.progress) : 0.85;
 
-    this.glowColor.lerp(this.glowTarget, Math.min(1, dt * 3));
-    (this.glow.material as THREE.MeshBasicMaterial).color.copy(this.glowColor);
-    const pulse = 0.85 + Math.sin(performance.now() / 600) * 0.08 + this.spin * 0.6;
-    this.glow.scale.setScalar(pulse);
+    // Leuchtring: Farbübergang, beim Abspielen leicht pulsierend
+    if (this.glowColor.r !== this.glowTarget.r || this.glowColor.g !== this.glowTarget.g || this.glowColor.b !== this.glowTarget.b) {
+      this.glowColor.lerp(this.glowTarget, Math.min(1, dt * 3));
+      const d = Math.abs(this.glowColor.r - this.glowTarget.r) + Math.abs(this.glowColor.g - this.glowTarget.g) + Math.abs(this.glowColor.b - this.glowTarget.b);
+      if (d < 0.003) this.glowColor.copy(this.glowTarget);
+      (this.glow.material as THREE.MeshBasicMaterial).color.copy(this.glowColor);
+      needs = true;
+    }
+    const active = this.player.playing || this.spin > 0;
+    const pulse = 0.85 + (active ? Math.sin(performance.now() / 600) * 0.08 : 0) + this.spin * 0.6;
+    if (Math.abs(this.glow.scale.x - pulse) > 0.0005) {
+      this.glow.scale.setScalar(this.glow.scale.x + (pulse - this.glow.scale.x) * Math.min(1, dt * 8));
+      needs = true;
+    }
 
     if (this.spin > 0) {
       this.spin = Math.max(0, this.spin - dt * 0.7);
       this.model.root.rotation.y += dt * 9 * this.spin * this.spin;
-    } else {
-      this.model.root.rotation.y = 0;
+      if (this.spin === 0) this.model.root.rotation.y = 0;
+      needs = true;
     }
 
     if (this.particles && this.particleVel) {
@@ -320,6 +366,7 @@ export class CubeView {
         this.particles.geometry.dispose();
         this.particles = null;
       }
+      needs = true;
     }
 
     if (this.camTween) {
@@ -331,13 +378,31 @@ export class CubeView {
       this.camera.position.copy(a.lerp(b, e).normalize().multiplyScalar(len));
       this.camera.lookAt(0, 0, 0);
       if (this.camTween.t >= 1) this.camTween = null;
+      needs = true;
     }
 
     if (this.controls) {
       this.controls.autoRotate = this.autoRotate && !this.player.playing;
-      this.controls.update();
+      // update() liefert true, solange sich die Kamera (inkl. Nachschwingen) bewegt
+      if (this.controls.update(dt)) needs = true;
     }
+
+    if (!needs) return;
     this.renderer.render(this.scene, this.camera);
+    perf.frame(dt, this.renderer.info.render.calls, this.pixelRatio);
+    this.adaptQuality(dt);
+  }
+
+  /** Senkt die Auflösung, wenn das Gerät dauerhaft unter ~40 FPS fällt. */
+  private adaptQuality(dt: number) {
+    if (dt > 1 / 40 && dt < 0.09) this.slowTime += dt;
+    else this.slowTime = Math.max(0, this.slowTime - dt * 0.5);
+    if (this.slowTime > 1.5 && this.pixelRatio > MIN_PIXEL_RATIO) {
+      this.pixelRatio = Math.max(MIN_PIXEL_RATIO, this.pixelRatio - 0.25);
+      this.renderer.setPixelRatio(this.pixelRatio);
+      this.resize();
+      this.slowTime = 0;
+    }
   }
 
   dispose() {

@@ -1,21 +1,15 @@
-import { geometry, moveToString, type Move } from '../cube/cube';
+import { moveToString, type Move } from '../cube/cube';
 import { htm } from '../cube/notation';
 import { ALL_CASES, type AlgCase, type AlgSet } from '../algs/data';
 import { caseState, getCustomAlg, normalizeAlg, preferredAlg, setCustomAlg, validateAlg } from '../algs/registry';
 import { GridRenderer } from '../render/GridRenderer';
 import { CubeView } from '../render/CubeView';
-import type { StickerLook } from '../render/CubeModel';
+import { lookFor } from './looks';
 import { progress, type LearnStatus } from '../progress';
 import { settings, saveSettings } from '../settings';
 import { clear, h, modal, toast } from './dom';
 import { llDiagram } from './caseDiagram';
 import { sliderFromTps, tpsFromSlider } from './solverView';
-
-export function lookFor(set: AlgSet): ((home: number) => StickerLook) | undefined {
-  if (set === 'F2L') return (home) => (geometry(home).p[1] === 1 ? 'gray' : 'color');
-  if (set === 'OLL') return (home) => (geometry(home).p[1] === 1 && Math.floor(home / 9) !== 0 ? 'gray' : 'color');
-  return undefined;
-}
 
 const STATUS_LABEL: Record<LearnStatus, string> = { new: 'Neu', learning: 'Am Lernen', learned: 'Gelernt' };
 
@@ -31,6 +25,8 @@ export class AlgsView {
   private tabs: HTMLElement;
   private groupsEl = h('div', { class: 'group-chips' });
   private cardEls = new Map<string, HTMLElement>();
+  /** Eine Detail-3D-Ansicht für alle Modals (WebGL-Kontext wird wiederverwendet) */
+  private detailView: CubeView | null = null;
 
   constructor() {
     this.tabs = h('div', { class: 'seg-tabs' });
@@ -101,7 +97,6 @@ export class AlgsView {
       this.renderTabs();
       this.refreshBadges();
     });
-    document.addEventListener('open-case', (e) => this.openCase((e as CustomEvent<string>).detail));
   }
 
   activate() {
@@ -396,18 +391,22 @@ export class AlgsView {
       wide: true,
       onClose: () => {
         clearTimeout(restartTimer);
-        view?.dispose();
+        view?.player.pause();
+        view?.setRunning(false);
         view = null;
         this.grid?.setActive(this.el.classList.contains('active'));
       },
     });
     requestAnimationFrame(() => {
-      view = new CubeView(stage, { cameraDistance: 9.5 });
+      if (!this.detailView) this.detailView = new CubeView(stage, { cameraDistance: 9.5 });
+      else this.detailView.mount(stage);
+      view = this.detailView;
+      view.setRunning(true);
       view.showArrows = true;
       view.arrowColor = c.set === 'F2L' ? '#3ddc84' : c.set === 'OLL' ? '#ffd60a' : '#c77dff';
       view.setPhaseColor(view.arrowColor);
       view.look = lookFor(c.set);
-      if (c.set !== 'F2L') view.resetCamera('top');
+      view.resetCamera(c.set === 'F2L' ? 'default' : 'top');
       view.player.onIndex = (i) => {
         chips.querySelectorAll('.mv').forEach((el, k) => {
           el.classList.toggle('done', k < i);

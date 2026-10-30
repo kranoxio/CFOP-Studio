@@ -7,6 +7,7 @@ export const FACE_COLORS = ['#ffd500', '#ff6b00', '#00c853', '#f4f6fb', '#e8102a
 const GRAY = '#3a3d46';
 
 export type StickerLook = 'color' | 'dim' | 'gray';
+export type Quality = 'high' | 'low';
 
 export interface Visual {
   state: State;
@@ -33,122 +34,159 @@ interface SharedAssets {
   body: THREE.BufferGeometry;
   tile: THREE.BufferGeometry;
   bodyMat: THREE.Material;
-  mats: Record<StickerLook, THREE.Material[]>;
+  tileMat: THREE.Material;
+  /** Farben je Darstellung und Fläche (linear) */
+  colors: Record<StickerLook, THREE.Color[]>;
 }
 
-const assetCache = new Map<string, SharedAssets>();
+const assetCache = new Map<Quality, SharedAssets>();
 
-function assets(quality: 'high' | 'low'): SharedAssets {
+function assets(quality: Quality): SharedAssets {
   let a = assetCache.get(quality);
   if (a) return a;
-  const body = new RoundedBoxGeometry(0.97, 0.97, 0.97, quality === 'high' ? 4 : 2, 0.12);
+  const high = quality === 'high';
+  const body = new RoundedBoxGeometry(0.97, 0.97, 0.97, high ? 4 : 2, 0.12);
   const tile = new THREE.ExtrudeGeometry(roundedRectShape(0.86, 0.14), {
     depth: 0.018,
-    bevelEnabled: quality === 'high',
+    bevelEnabled: high,
     bevelThickness: 0.012,
     bevelSize: 0.012,
     bevelSegments: 2,
-    curveSegments: quality === 'high' ? 6 : 3,
+    curveSegments: high ? 6 : 3,
   });
   tile.computeVertexNormals();
-  const bodyMat = new THREE.MeshPhysicalMaterial({ color: '#0d0e12', roughness: 0.42, metalness: 0.0, clearcoat: 0.4, clearcoatRoughness: 0.5 });
-  const make = (hex: string, dim = 1) => {
-    const c = new THREE.Color(hex).multiplyScalar(dim);
-    return quality === 'high'
-      ? new THREE.MeshPhysicalMaterial({ color: c, roughness: 0.22, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.12 })
-      : new THREE.MeshStandardMaterial({ color: c, roughness: 0.3, metalness: 0 });
+  const bodyMat = high
+    ? new THREE.MeshPhysicalMaterial({ color: '#0d0e12', roughness: 0.42, clearcoat: 0.4, clearcoatRoughness: 0.5 })
+    : new THREE.MeshStandardMaterial({ color: '#0d0e12', roughness: 0.45 });
+  // Weisse Basisfarbe – die eigentliche Farbe kommt pro Instanz
+  const tileMat = high
+    ? new THREE.MeshPhysicalMaterial({ color: '#ffffff', roughness: 0.22, clearcoat: 1, clearcoatRoughness: 0.12 })
+    : new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.3 });
+  const colors = {
+    color: FACE_COLORS.map((c) => new THREE.Color(c)),
+    dim: FACE_COLORS.map((c) => new THREE.Color(c).multiplyScalar(0.22)),
+    gray: FACE_COLORS.map(() => new THREE.Color(GRAY)),
   };
-  const mats = {
-    color: FACE_COLORS.map((c) => make(c)),
-    dim: FACE_COLORS.map((c) => make(c, 0.22)),
-    gray: FACE_COLORS.map(() => make(GRAY)),
-  };
-  a = { body, tile, bodyMat, mats };
+  a = { body, tile, bodyMat, tileMat, colors };
   assetCache.set(quality, a);
   return a;
 }
 
-interface Cubie {
-  group: THREE.Group;
-  home: THREE.Vector3;
-}
+const tmpMat = new THREE.Matrix4();
+const tmpQuat = new THREE.Quaternion();
+const tmpAxis = new THREE.Vector3();
 
 /**
  * 3D-Würfel nach dem "Umfärben"-Prinzip: Cubies bleiben an ihrer Position, nur während
  * einer Drehung wird eine Schicht rotiert. Danach werden die Sticker gemäss Zustand neu gefärbt.
+ *
+ * Gezeichnet wird mit zwei InstancedMeshes (Körper + Sticker) – also nur 2 Draw Calls pro Würfel.
  */
 export class CubeModel {
   readonly root = new THREE.Group();
-  private cubies: Cubie[] = [];
-  /** stickers[facelet] */
-  private stickers: THREE.Mesh[] = [];
+  /** Transformations-Halter je Cubie (werden nicht selbst gezeichnet) */
+  private cubies: THREE.Object3D[] = [];
+  private homes: THREE.Vector3[] = [];
+  private bodies: THREE.InstancedMesh;
+  private tiles: THREE.InstancedMesh;
+  private tileLocal: THREE.Matrix4[] = [];
   private cubieOfFacelet: number[] = [];
   private shared: SharedAssets;
+  /** Zuletzt gemalte Farben, um unnötige GPU-Uploads zu vermeiden */
+  private lastColor: (THREE.Color | null)[] = new Array(54).fill(null);
+  private turnKey = '';
 
-  constructor(quality: 'high' | 'low' = 'high') {
+  constructor(quality: Quality = 'high') {
     this.shared = assets(quality);
+    this.bodies = new THREE.InstancedMesh(this.shared.body, this.shared.bodyMat, 26);
+    this.tiles = new THREE.InstancedMesh(this.shared.tile, this.shared.tileMat, 54);
+    for (const m of [this.bodies, this.tiles]) {
+      m.frustumCulled = false;
+      m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      this.root.add(m);
+    }
     const index = new Map<string, number>();
     for (let x = -1; x <= 1; x++)
       for (let y = -1; y <= 1; y++)
         for (let z = -1; z <= 1; z++) {
           if (x === 0 && y === 0 && z === 0) continue;
-          const group = new THREE.Group();
-          group.position.set(x, y, z);
-          const body = new THREE.Mesh(this.shared.body, this.shared.bodyMat);
-          group.add(body);
-          this.root.add(group);
+          const o = new THREE.Object3D();
+          o.position.set(x, y, z);
           index.set(`${x},${y},${z}`, this.cubies.length);
-          this.cubies.push({ group, home: new THREE.Vector3(x, y, z) });
+          this.cubies.push(o);
+          this.homes.push(new THREE.Vector3(x, y, z));
         }
+    const z = new THREE.Vector3(0, 0, 1);
     for (let i = 0; i < 54; i++) {
       const { p, n } = geometry(i);
-      const ci = index.get(p.join(','))!;
-      const mesh = new THREE.Mesh(this.shared.tile, this.shared.mats.color[Math.floor(i / 9)]);
+      this.cubieOfFacelet.push(index.get(p.join(','))!);
       const normal = new THREE.Vector3(...n);
-      mesh.position.copy(normal).multiplyScalar(0.475);
-      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
-      this.cubies[ci].group.add(mesh);
-      this.stickers.push(mesh);
-      this.cubieOfFacelet.push(ci);
+      const local = new THREE.Matrix4().compose(normal.clone().multiplyScalar(0.475), new THREE.Quaternion().setFromUnitVectors(z, normal), new THREE.Vector3(1, 1, 1));
+      this.tileLocal.push(local);
+      this.tiles.setColorAt(i, this.shared.colors.color[Math.floor(i / 9)]);
     }
+    this.commit();
   }
 
-  /** Färbt alle Sticker gemäss Zustand. */
-  paint(v: Visual) {
-    const { mats } = this.shared;
+  /** Färbt alle Sticker gemäss Zustand. Gibt true zurück, wenn sich etwas geändert hat. */
+  paint(v: Visual): boolean {
+    const { colors } = this.shared;
+    let changed = false;
     for (let i = 0; i < 54; i++) {
       const home = v.state[i];
-      const look = v.look ? v.look(home) : 'color';
-      this.stickers[i].material = mats[look][Math.floor(home / 9)];
+      const c = colors[v.look ? v.look(home) : 'color'][Math.floor(home / 9)];
+      if (this.lastColor[i] !== c) {
+        this.lastColor[i] = c;
+        this.tiles.setColorAt(i, c);
+        changed = true;
+      }
     }
+    if (changed) this.tiles.instanceColor!.needsUpdate = true;
+    return changed;
   }
 
   /** Dreht die zum Zug gehörenden Schichten um einen Anteil (0..1) der Drehung. */
   setTurn(move: Move | null, progress: number) {
-    for (const c of this.cubies) {
-      c.group.position.copy(c.home);
-      c.group.quaternion.identity();
+    const key = move && progress > 0 ? `${move.base}${move.amount}:${progress}` : '';
+    if (key === this.turnKey) return;
+    this.turnKey = key;
+    for (let i = 0; i < this.cubies.length; i++) {
+      this.cubies[i].position.copy(this.homes[i]);
+      this.cubies[i].quaternion.identity();
     }
-    if (!move || progress <= 0) return;
-    const def = MOVE_DEFS[move.base];
-    const turns = move.amount === 3 ? -1 : move.amount;
-    const angle = def.dir * turns * (Math.PI / 2) * progress;
-    const axis = new THREE.Vector3(def.axis === 0 ? 1 : 0, def.axis === 1 ? 1 : 0, def.axis === 2 ? 1 : 0);
-    const q = new THREE.Quaternion().setFromAxisAngle(axis, angle);
-    for (const c of this.cubies) {
-      const coord = def.axis === 0 ? c.home.x : def.axis === 1 ? c.home.y : c.home.z;
-      if (!def.layers.includes(coord)) continue;
-      c.group.position.copy(c.home).applyQuaternion(q);
-      c.group.quaternion.copy(q);
+    if (move && progress > 0) {
+      const def = MOVE_DEFS[move.base];
+      const turns = move.amount === 3 ? -1 : move.amount;
+      tmpAxis.set(def.axis === 0 ? 1 : 0, def.axis === 1 ? 1 : 0, def.axis === 2 ? 1 : 0);
+      tmpQuat.setFromAxisAngle(tmpAxis, def.dir * turns * (Math.PI / 2) * progress);
+      for (let i = 0; i < this.cubies.length; i++) {
+        const h = this.homes[i];
+        const coord = def.axis === 0 ? h.x : def.axis === 1 ? h.y : h.z;
+        if (!def.layers.includes(coord)) continue;
+        this.cubies[i].position.copy(h).applyQuaternion(tmpQuat);
+        this.cubies[i].quaternion.copy(tmpQuat);
+      }
     }
+    this.commit();
   }
 
-  /** Für die Intro-Animation: Cubies einzeln versetzen. */
-  forEachCubie(fn: (group: THREE.Group, home: THREE.Vector3, index: number) => void) {
-    this.cubies.forEach((c, i) => fn(c.group, c.home, i));
+  /** Schreibt die Cubie-Transformationen in die Instanz-Matrizen. */
+  commit() {
+    for (let i = 0; i < this.cubies.length; i++) {
+      this.cubies[i].updateMatrix();
+      this.bodies.setMatrixAt(i, this.cubies[i].matrix);
+    }
+    for (let i = 0; i < 54; i++) {
+      tmpMat.multiplyMatrices(this.cubies[this.cubieOfFacelet[i]].matrix, this.tileLocal[i]);
+      this.tiles.setMatrixAt(i, tmpMat);
+    }
+    this.bodies.instanceMatrix.needsUpdate = true;
+    this.tiles.instanceMatrix.needsUpdate = true;
   }
 
-  stickerMesh(facelet: number) {
-    return this.stickers[facelet];
+  /** Für die Intro-Animation: Cubies einzeln versetzen, danach commit() aufrufen. */
+  forEachCubie(fn: (cubie: THREE.Object3D, home: THREE.Vector3, index: number) => void) {
+    this.cubies.forEach((c, i) => fn(c, this.homes[i], i));
+    this.turnKey = '#';
   }
 }

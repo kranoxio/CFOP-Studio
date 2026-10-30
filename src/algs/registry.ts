@@ -21,6 +21,16 @@ export function rotationFree(text: string): Move[] {
 const CUSTOM_KEY = 'customAlgs';
 let custom: Record<string, string> = storage.get(CUSTOM_KEY, {});
 
+/** Für den Solver-Worker (kein localStorage dort): eigene Algs übernehmen. */
+export function setCustomAlgs(map: Record<string, string>) {
+  custom = { ...map };
+  cacheVersion++;
+}
+
+export function getCustomAlgs(): Record<string, string> {
+  return { ...custom };
+}
+
 export function getCustomAlg(id: string): string | undefined {
   return custom[id];
 }

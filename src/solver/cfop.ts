@@ -245,7 +245,6 @@ export function solveCFOP(start: State, opts: SolveOptions = { f2lMode: 'alg' })
     if (!best) throw new Error('F2L konnte nicht gelöst werden');
 
     const c = best.caseRef;
-    const rotName = formatAlg(SLOT_ROTATION[best.slot.name]);
     const mergedAuf = best.auf.length > 0 && best.moves.length === best.auf.length + best.alg.length ? best.auf.length : 0;
     steps.push({
       phase: 'f2l',
@@ -260,7 +259,7 @@ export function solveCFOP(start: State, opts: SolveOptions = { f2lMode: 'alg' })
       note: c
         ? best.slot.name === 'FR'
           ? `${c.group} · ${best.algText}`
-          : `${c.group} · vom Slot vorne rechts aus: ${rotName} ${best.algText}`
+          : `${c.group} · vom Slot vorne rechts aus: ${formatAlg(simplify([...SLOT_ROTATION[best.slot.name], ...parseAlg(best.algText!)]))}`
         : 'Kein Standardfall (Teile stecken fest) – computer-optimale Lösung',
       focus: focusForSlot(best.slot),
     });
