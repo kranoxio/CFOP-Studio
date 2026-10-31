@@ -1,0 +1,13 @@
+services:
+  cfop-studio:
+    image: ghcr.io/kranoxio/cfop-studio:latest
+    container_name: cfop-studio
+    restart: unless-stopped
+    ports:
+      - "8085:80"
+    volumes:
+      # Sync-Profile (Fortschritt, Algs, Zeiten) bleiben bei Updates erhalten
+      - cfop-data:/data
+
+volumes:
+  cfop-data:

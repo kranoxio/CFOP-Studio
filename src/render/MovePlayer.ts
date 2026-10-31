@@ -1,0 +1,221 @@
+import { isRotation, type Move, type State } from '../cube/cube';
+import { engineFor, type Engine } from '../cube/engine';
+
+export const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+export const easeOutSnap = (t: number) => 1 - Math.pow(1 - t, 3.2);
+
+/**
+ * Kubische Hermite-Kurve von 0 nach 1 mit Start-/Endsteigung s0/s1.
+ * s = 0: aus dem Stand bzw. bis zum Stillstand; s ≈ 0.8: fliessender Übergang zum Nachbarzug.
+ */
+export function hermite(t: number, s0: number, s1: number) {
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return (t3 - 2 * t2 + t) * s0 + (3 * t2 - 2 * t3) + (t3 - t2) * s1;
+}
+
+/** Steigung an verketteten Zuggrenzen */
+const CHAIN = 0.8;
+
+/** Relative Dauer eines Zuges (Doppelzüge dauern etwas länger, wie beim echten Würfel). */
+export function moveWeight(m: Move) {
+  if (isRotation(m)) return m.amount === 2 ? 1.5 : 1.15;
+  return m.amount === 2 ? 1.4 : 1;
+}
+
+export interface PlayerFrame {
+  /** Zustand, der gemalt werden soll (vor dem laufenden Zug) */
+  state: State;
+  move: Move | null;
+  progress: number;
+}
+
+/**
+ * Spielt eine Zugfolge ab: vorwärts, rückwärts, springen, Geschwindigkeit in TPS.
+ * Alle Zwischenzustände werden vorab berechnet, damit das Springen sofort geht.
+ */
+export class MovePlayer {
+  moves: Move[] = [];
+  /** Puzzle, dessen Züge abgespielt werden (bestimmt, wie ein Zug den Zustand ändert) */
+  engine: Engine = engineFor(3);
+  states: State[] = [engineFor(3).solved()];
+  /** Anzahl vollständig ausgeführter Züge */
+  index = 0;
+  private progress = 0;
+  private reverse = false;
+  playing = false;
+  tps = 4;
+  /** Stoppt automatisch an diesem Index */
+  stopAt: number | null = null;
+  onIndex: ((index: number) => void) | null = null;
+  onFinish: (() => void) | null = null;
+  /** Optional: an diesem Index hält die Wiedergabe an (z.B. Schrittgrenze) – dort wird abgebremst */
+  isBoundary: ((index: number) => boolean) | null = null;
+  /** Fliessende Übergänge zwischen aufeinanderfolgenden Zügen */
+  fluid = true;
+  private startSlope = 0;
+  private endSlope = 0;
+
+  load(base: State, moves: Move[], index = 0) {
+    this.moves = moves;
+    this.states = [base];
+    for (const m of moves) this.states.push(this.engine.apply(this.states[this.states.length - 1], m));
+    this.index = Math.min(index, moves.length);
+    this.progress = 0;
+    this.reverse = false;
+    this.playing = false;
+    this.stopAt = null;
+    this.onIndex?.(this.index);
+  }
+
+  /** Hängt Züge an, ohne die laufende Wiedergabe zu unterbrechen. */
+  extend(moves: Move[]) {
+    for (const m of moves) {
+      this.moves.push(m);
+      this.states.push(this.engine.apply(this.states[this.states.length - 1], m));
+    }
+  }
+
+  get state() {
+    return this.states[this.index];
+  }
+
+  get finished() {
+    return this.index >= this.moves.length;
+  }
+
+  get animating() {
+    return this.progress > 0;
+  }
+
+  /** Fortschritt als eine Zahl (Index + Anteil des laufenden Zuges) – für Änderungserkennung. */
+  get position() {
+    return this.index + this.progress;
+  }
+
+  play() {
+    if (this.finished) return;
+    this.playing = true;
+  }
+
+  pause() {
+    this.playing = false;
+  }
+
+  seek(index: number) {
+    this.index = Math.max(0, Math.min(this.moves.length, index));
+    this.progress = 0;
+    this.reverse = false;
+    this.onIndex?.(this.index);
+  }
+
+  /** Einen Zug animiert vorwärts. */
+  stepForward() {
+    if (this.progress > 0) this.completeCurrent();
+    if (this.finished) return;
+    this.playing = false;
+    this.reverse = false;
+    this.stopAt = this.index + 1;
+    this.startSlope = 0;
+    this.endSlope = 0;
+    this.progress = 0.0001;
+  }
+
+  /** Einen Zug animiert zurück. */
+  stepBack() {
+    if (this.progress > 0) this.completeCurrent();
+    if (this.index === 0) return;
+    this.playing = false;
+    this.index--;
+    this.reverse = true;
+    this.startSlope = 0;
+    this.endSlope = 0;
+    this.progress = 0.9999;
+    this.onIndex?.(this.index);
+  }
+
+  private completeCurrent() {
+    if (this.reverse) {
+      this.progress = 0;
+      this.reverse = false;
+    } else {
+      this.progress = 0;
+      this.index++;
+      this.onIndex?.(this.index);
+    }
+  }
+
+  update(dt: number) {
+    if (this.reverse) {
+      const m = this.moves[this.index];
+      this.progress -= (dt * this.tps) / moveWeight(m);
+      if (this.progress <= 0) {
+        this.progress = 0;
+        this.reverse = false;
+      }
+      return;
+    }
+    const wantsMove = this.progress > 0 || (this.playing && !this.finished);
+    if (!wantsMove) return;
+    let remaining = dt;
+    let chained = this.carryChain;
+    this.carryChain = false;
+    while (remaining > 0 && !this.finished) {
+      if (this.progress === 0) {
+        if (!this.playing) break;
+        if (this.stopAt !== null && this.index >= this.stopAt) {
+          this.playing = false;
+          this.stopAt = null;
+          break;
+        }
+      }
+      const m = this.moves[this.index];
+      if (this.progress === 0) this.beginMove(chained);
+      const need = ((1 - this.progress) * moveWeight(m)) / this.tps;
+      if (remaining < need) {
+        this.progress += (remaining * this.tps) / moveWeight(m);
+        remaining = 0;
+      } else {
+        remaining -= need;
+        this.progress = 0;
+        chained = this.endSlope > 0;
+        this.index++;
+        this.onIndex?.(this.index);
+        if (this.stopAt !== null && this.index >= this.stopAt) {
+          this.playing = false;
+          this.stopAt = null;
+          break;
+        }
+        // Restzeit fliesst in den nächsten Zug, damit die Gesamtdauer exakt stimmt
+      }
+    }
+    // Endete der Zug genau am Frame-Ende, beginnt der nächste im nächsten Frame verkettet
+    if (this.progress === 0 && this.playing) this.carryChain = chained;
+    if (this.finished && this.playing) {
+      this.playing = false;
+      this.onFinish?.();
+    }
+  }
+
+  private carryChain = false;
+
+  /** Legt fest, ob der Zug aus der Bewegung startet und ob er fliessend in den nächsten übergeht. */
+  private beginMove(fromChain: boolean) {
+    const next = this.index + 1;
+    const continues =
+      this.fluid &&
+      this.playing &&
+      next < this.moves.length &&
+      (this.stopAt === null || next < this.stopAt) &&
+      !this.isBoundary?.(next);
+    this.startSlope = this.fluid && fromChain ? CHAIN : 0;
+    this.endSlope = continues ? CHAIN : 0;
+  }
+
+  frame(): PlayerFrame {
+    if (this.progress > 0 && this.index < this.moves.length) {
+      return { state: this.states[this.index], move: this.moves[this.index], progress: hermite(this.progress, this.startSlope, this.endSlope) };
+    }
+    return { state: this.states[this.index], move: null, progress: 0 };
+  }
+}
