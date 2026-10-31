@@ -27,6 +27,9 @@ Läuft auf Desktop und Handy.
 
   Die Sammlung zeigt die 2×2-Kategorien OLL, PBL, CLL, EG-1, EG-2; im Trainer lassen sich beliebige
   Kategorien kombinieren (z. B. nur EG-1 + EG-2). Timer mit 2×2-Scrambles und eigener Session.
+- **4×4-Modus**: eigenes 4×4-Modell (Wide-Moves, innere Schichten, 3Rw, M/E/S), WCA-artige Scrambles,
+  Timer mit eigener Session, freies Drehen per Wischen, Battle. Sammlung, Erkennungs-Trainer und Drill mit
+  OLL-Parität (27 Fälle) und PLL-Parität (22 Fälle). Einen automatischen 4×4-Löser gibt es noch nicht.
 - **Statistik**: Verlauf mit ao5, ao5/ao12/ao100. Mit Smartcube-Solves zusätzlich die Schwächen-Analyse:
   Zeit pro Phase im Vergleich zu einem Sub-10-Profil, Pause vor jeder Phase (Erkennung/Lookahead),
   Ausführungs-TPS, die langsamsten OLL- und PLL-Fälle (direkt zum Üben oder Drillen).

@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import { MOVE_DEFS, geometry, type Move } from '../cube/cube';
+import { MOVE_DEFS, type Move } from '../cube/cube';
+import { MOVE_DEFS4 } from '../cube/cube4';
+import { engineFor, type PuzzleSize } from '../cube/engine';
 import { CubeModel, FACE_COLORS, type Quality, type StickerLook } from './CubeModel';
 import { MovePlayer } from './MovePlayer';
 import { perf } from './perf';
@@ -13,8 +15,8 @@ export interface CubeViewOptions {
   interactive?: boolean;
   intro?: boolean;
   cameraDistance?: number;
-  /** 3 = 3x3 (Standard), 2 = 2x2 */
-  size?: 2 | 3;
+  /** 3 = 3x3 (Standard), 2 = 2x2, 4 = 4x4 */
+  size?: PuzzleSize;
 }
 
 function radialTexture(stops: [number, string][]) {
@@ -110,6 +112,7 @@ export class CubeView {
 
     this.quality = opts.quality ?? 'high';
     this.model = new CubeModel(this.quality, opts.size ?? 3);
+    this.player.engine = engineFor(opts.size ?? 3);
     this.scene.add(this.model.root);
 
     // weicher Kontaktschatten
@@ -228,7 +231,8 @@ export class CubeView {
    * wird jene gewählt, deren Drehbewegung am Sticker am besten zur Wischrichtung passt.
    */
   private moveFromDrag(facelet: number, dx: number, dy: number): Move | null {
-    const { p, n } = geometry(facelet);
+    const engine = this.model.engine;
+    const { p, n } = engine.geometry(facelet);
     const pos = new THREE.Vector3(...p);
     const toScreen = (v: THREE.Vector3) => {
       const w = this.model.worldOf(v).project(this.camera);
@@ -247,12 +251,13 @@ export class CubeView {
     }
     if (!best || Math.abs(best.score) < 0.3) return null;
     const layer = p[best.axis];
-    const base = Object.keys(MOVE_DEFS).find((k) => {
-      const d = MOVE_DEFS[k];
+    const defs = engine.size === 4 ? Object.keys(MOVE_DEFS4) : Object.keys(MOVE_DEFS);
+    const base = defs.find((k) => {
+      const d = engine.def(k)!;
       return d.axis === best!.axis && d.layers.length === 1 && d.layers[0] === layer;
     });
     if (!base) return null;
-    const amount = best.sign === MOVE_DEFS[base].dir ? 1 : 3;
+    const amount = best.sign === engine.def(base)!.dir ? 1 : 3;
     return { base, amount };
   }
 
@@ -294,11 +299,15 @@ export class CubeView {
   }
 
   /** Wechselt zwischen 3x3 und 2x2 (Modell wird ausgetauscht, Wiedergabe bleibt). */
-  setPuzzle(size: 2 | 3) {
+  setPuzzle(size: PuzzleSize) {
+    this.player.engine = engineFor(size);
     if (this.model.size === size) return;
     this.scene.remove(this.model.root);
     this.model = new CubeModel(this.quality, size);
     this.scene.add(this.model.root);
+    // Läuft gerade die Intro, braucht das neue Modell eigene Startpositionen
+    if (this.introT >= 0) this.startIntro();
+    this.lastArrowKey = '#';
     this.dirty = true;
   }
 
@@ -317,7 +326,7 @@ export class CubeView {
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     // Auf schmalen Bildschirmen etwas weiter weg, damit der Würfel ganz sichtbar bleibt
-    this.camera.fov = w / h < 0.8 ? 40 : 32;
+    this.camera.fov = w / h < 1 ? 40 : 32;
     this.camera.updateProjectionMatrix();
     this.dirty = true;
   }
@@ -389,12 +398,17 @@ export class CubeView {
     }
     this.arrow.clear();
     if (!move || !this.showArrows) return;
-    const def = MOVE_DEFS[move.base];
-    if (def.layers.length === 1 && def.layers[0] === 0) return; // Slices: kein Pfeil
-    const outer = def.layers.length === 3 ? 1 : def.layers.includes(1) ? 1 : -1;
+    const e = this.model.engine;
+    const def = e.def(move.base);
+    if (!def) return;
+    const whole = def.layers.length === (e.size === 4 ? 4 : 3);
+    // Innere Schichten/Slices: kein Pfeil
+    if (!whole && !def.layers.includes(e.outer) && !def.layers.includes(-e.outer)) return;
+    const outer = whole ? 1 : def.layers.includes(e.outer) ? 1 : -1;
     const sign = def.dir * (move.amount === 3 ? -1 : 1);
     const arc = move.amount === 2 ? Math.PI * 0.95 : Math.PI * 0.55;
-    const radius = def.layers.length === 3 ? 2.15 : 1.25;
+    const half = (e.outer * e.spacing + 0.5) * e.scale;
+    const radius = whole ? half + 0.65 : Math.max(1, half * 0.85);
     this.arrowMat.color.set(color);
     const tube = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.055, 8, 48, arc), this.arrowMat);
     tube.rotation.z = -arc / 2 + Math.PI / 2;
@@ -416,7 +430,7 @@ export class CubeView {
     const holder = new THREE.Group();
     holder.add(g);
     holder.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), axis);
-    holder.position.copy(axis).multiplyScalar(outer * (def.layers.length === 3 ? 0 : 1.62));
+    holder.position.copy(axis).multiplyScalar(outer * (whole ? 0 : half + 0.12));
     this.arrow.add(holder);
   }
 

@@ -2,7 +2,7 @@ import { applyMoves, moveToString, solvedState, type Move, type State } from '..
 import { smartCube, sameColors } from '../smartcube/smartcube';
 import { reconstructionSteps } from '../smartcube/splits';
 import type { Solve } from './timerView';
-import { conjugateAlg, formatAlg, htm, invertAlg, parseAlg, simplify, tryParseAlg } from '../cube/notation';
+import { conjugateAlg, formatAlg, htm, invertAlg, parseAlg, simplify } from '../cube/notation';
 import type { Solution, SolveStep } from '../solver/cfop';
 import { callSolver, solveAsync } from '../solver/client';
 import { CASE_BY_ID, caseTitle } from '../algs/data';
@@ -11,13 +11,16 @@ import { moveWeight } from '../render/MovePlayer';
 import { settings, saveSettings } from '../settings';
 import { clear, h, modal, toast } from './dom';
 import { llDiagram, llDiagram2 } from './caseDiagram';
-import { scrambleFor } from './puzzle';
+import { scrambleFor, tryParseFor, wcaStart } from './puzzle';
+import { engineFor } from '../cube/engine';
 import { METHOD2_LABEL, type Method2 } from '../solver/cube2';
 import { PHASE_COLORS, PHASE_LABELS } from './phases';
 
 const CENTERS = [4, 13, 22, 31, 40, 49];
 /** Startorientierung für WCA-Scrambles: Weiss oben, Grün vorne. */
 const WCA_START: State = applyMoves(solvedState(), parseAlg('z2'));
+/** Züge mit der Engine des aktiven Puzzles anwenden */
+const applyFor = (s: State, moves: Move[]) => moves.reduce((acc, m) => engineFor(settings.puzzle).apply(acc, m), s);
 
 export const tpsFromSlider = (v: number) => 0.5 * Math.pow(40, v / 100);
 export const sliderFromTps = (t: number) => (Math.log(t / 0.5) / Math.log(40)) * 100;
@@ -251,6 +254,7 @@ export class SolverView {
   /** Optionen der Methoden-Auswahl: 3x3 = F2L-Stil, 2x2 = Methode (Ortega / CLL / EG) */
   private fillModeOptions() {
     const sel = this.modeSel;
+    sel.style.visibility = settings.puzzle === 4 ? 'hidden' : '';
     sel.replaceChildren(
       ...(settings.puzzle === 2
         ? (Object.keys(METHOD2_LABEL) as Method2[]).map((m) => h('option', { value: m, selected: settings.method2 === m }, METHOD2_LABEL[m]))
@@ -298,7 +302,9 @@ export class SolverView {
   }
 
   /** Löst je nach Puzzle mit dem 3x3-CFOP- oder dem 2x2-Solver */
-  private runSolver(state: State) {
+  private runSolver(state: State): Promise<{ solution: Solution; ms: number }> {
+    // 4x4: noch kein automatischer Löser – Verdrehen, freies Drehen und Timer funktionieren
+    if (settings.puzzle === 4) return Promise.resolve({ solution: { steps: [], moveCount: 0 }, ms: 0 });
     return settings.puzzle === 2
       ? callSolver('solve2', state, settings.method2).then((r) => ({ solution: r.result, ms: r.ms }))
       : solveAsync(state, { f2lMode: settings.f2lMode, adv: settings.adv });
@@ -383,7 +389,7 @@ export class SolverView {
     this.modeSel.style.display = opts.steps ? 'none' : '';
     this.scrambleLen = scramble.length;
     this.segments = [{ kind: 'scramble', stepIndex: -1, start: 0, end: scramble.length }];
-    const base = opts.base ?? WCA_START;
+    const base = opts.base ?? wcaStart();
     const p = this.view.player;
     p.load(base, [...scramble], animateScramble ? 0 : this.scrambleLen);
     this.liveOff = [];
@@ -400,14 +406,14 @@ export class SolverView {
     this.lastIndex = -1;
     this.activeSeg = -1;
     this.onIndex(p.index);
-    if (scramble.length) history.replaceState(null, '', `#${settings.puzzle === 2 ? 'p=2&' : ''}scramble=${encodeURIComponent(formatAlg(scramble))}`);
+    if (scramble.length) history.replaceState(null, '', `#${settings.puzzle !== 3 ? `p=${settings.puzzle}&` : ''}scramble=${encodeURIComponent(formatAlg(scramble))}`);
 
     let solution: Solution;
     let ms: number | null = null;
     if (opts.steps) {
       solution = { steps: opts.steps, moveCount: opts.steps.reduce((n, st) => n + htm(st.moves), 0) };
     } else {
-      const res = await this.runSolver(applyMoves(base, scramble));
+      const res = await this.runSolver(applyFor(base, scramble));
       solution = res.solution;
       ms = res.ms;
     }
@@ -427,7 +433,7 @@ export class SolverView {
     this.onIndex(p.index);
     if (opts.compare) {
       // Vergleich mit der Solver-Lösung desselben Scrambles
-      const res = await this.runSolver(applyMoves(base, scramble));
+      const res = await this.runSolver(applyFor(base, scramble));
       if (token === this.solveToken) this.statsEl.append(h('div', { class: 'compare-line' }, `Solver (CFOP mit Standard-Algs): ${res.solution.moveCount} Züge · du: ${solution.moveCount} Züge`));
     }
   }
@@ -515,14 +521,14 @@ export class SolverView {
     const m = location.hash.match(/scramble=([^&]+)/);
     if (!m) return null;
     // Geteilte 2x2-Links öffnen direkt im 2x2-Modus
-    const p = /[#&]p=2(&|$)/.test(location.hash) ? 2 : 3;
+    const p = (Number(location.hash.match(/[#&]p=([234])(&|$)/)?.[1]) || 3) as 2 | 3 | 4;
     if (p !== settings.puzzle) {
       settings.puzzle = p;
       saveSettings();
       this.view?.setPuzzle(p);
       document.dispatchEvent(new CustomEvent('puzzle-change', { detail: p }));
     }
-    const moves = tryParseAlg(decodeURIComponent(m[1]));
+    const moves = tryParseFor(decodeURIComponent(m[1]), p);
     return moves && moves.length ? moves : null;
   }
 
@@ -552,7 +558,7 @@ export class SolverView {
           h('button', {
             class: 'btn primary',
             onclick: () => {
-              const moves = tryParseAlg(ta.value);
+              const moves = tryParseFor(ta.value);
               if (!moves || !moves.length) {
                 err.textContent = 'Notation nicht erkannt. Erlaubt: U D R L F B, Rw/r, M E S, x y z mit \' und 2.';
                 return;
@@ -681,8 +687,8 @@ export class SolverView {
       this.hud.sub.textContent = '';
       clear(this.hud.alg);
       this.sandboxBar.replaceChildren(
-        h('button', { class: 'chip-btn', onclick: () => this.solve([], false, { base: this.view!.player.state, title: 'Lösung deines Zustands' }) }, '🧊 Diesen Zustand lösen'),
-        h('button', { class: 'chip-btn', onclick: () => this.solve(this.lastScramble, false) }, '↩ Zurück zur Lösung'),
+        ...(settings.puzzle === 4 ? [] : [h('button', { class: 'chip-btn', onclick: () => this.solve([], false, { base: this.view!.player.state, title: 'Lösung deines Zustands' }) }, '🧊 Diesen Zustand lösen')]),
+        h('button', { class: 'chip-btn', onclick: () => this.solve(this.lastScramble, false) }, settings.puzzle === 4 ? '↩ Zurück zum Scramble' : '↩ Zurück zur Lösung'),
       );
     }
     p.extend([m]);
@@ -734,7 +740,7 @@ export class SolverView {
 
   private onFinish() {
     this.updatePlayBtn();
-    if (this.view && this.view.player.index === this.view.player.moves.length && this.solution) {
+    if (this.view && this.view.player.index === this.view.player.moves.length && this.solution?.steps.length) {
       this.view.celebrate();
       const t = this.solveTime;
       toast(`Gelöst! ${this.solution.moveCount} Züge${t > 0 ? ` in ${t.toFixed(2)} s` : ''} 🎉`);
@@ -764,7 +770,11 @@ export class SolverView {
     this.hud.phase.style.setProperty('--c', color);
     this.view?.setPhaseColor(color);
     if (this.view) this.view.arrowColor = color;
-    if (!seg) {
+    if (!seg && settings.puzzle === 4 && !this.solution?.steps.length) {
+      this.hud.title.textContent = '4×4 verdreht';
+      this.hud.sub.textContent = 'Löse selbst (🖐 Drehen) oder im Timer – einen automatischen 4×4-Löser gibt es noch nicht.';
+      this.hud.phase.textContent = '4×4';
+    } else if (!seg) {
       this.hud.title.textContent = 'Gelöst!';
       this.hud.sub.textContent = this.solution ? `${this.solution.moveCount} Züge (HTM)` : '';
     } else if (seg.kind === 'scramble') {
@@ -802,6 +812,12 @@ export class SolverView {
   private renderStats(solveMs: number | null) {
     clear(this.statsEl);
     if (!this.solution) return;
+    if (settings.puzzle === 4 && !this.solution.steps.length) {
+      this.statsEl.append(
+        h('div', { class: 'insight' }, 'Für den 4×4 gibt es noch keinen automatischen Löser (Reduktion: Zentren, Kantenpaare, Paritäten). Du kannst den Scramble abspielen, mit 🖐 selbst drehen, im Timer lösen und unter „Algorithmen“ die OLL- und PLL-Parität mit allen Fällen üben.'),
+      );
+      return;
+    }
     const total = this.solution.moveCount;
     const byPhase = new Map<string, number>();
     for (const st of this.solution.steps) byPhase.set(st.phase, (byPhase.get(st.phase) ?? 0) + htm(st.moves));

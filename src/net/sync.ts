@@ -4,7 +4,7 @@ import { setCustomAlgs } from '../algs/registry';
 import { apiPost, serverAvailable } from './api';
 
 /** Diese Daten werden zwischen Geräten abgeglichen */
-const SYNC_KEYS = ['progress', 'customAlgs', 'solves', 'solves2', 'crossStats', 'lookaheadStats', 'recogSets', 'drillSets'];
+const SYNC_KEYS = ['progress', 'customAlgs', 'solves', 'solves2', 'solves4', 'crossStats', 'lookaheadStats', 'recogSets', 'drillSets'];
 const CODE_KEY = 'cfop-studio:syncCode';
 
 interface Entry {

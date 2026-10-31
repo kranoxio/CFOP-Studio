@@ -13,7 +13,7 @@ export interface BattleResult {
 
 export interface BattleState {
   code: string;
-  puzzle: 2 | 3;
+  puzzle: 2 | 3 | 4;
   round: number;
   scramble: string;
   host: string;
@@ -70,7 +70,7 @@ class Battle {
     this.listeners.forEach((l) => l(this.state));
   }
 
-  async create(name: string, puzzle: 2 | 3) {
+  async create(name: string, puzzle: 2 | 3 | 4) {
     const r = await apiPost<{ code: string; playerId: string; room: BattleState }>('/rooms', { name, puzzle });
     this.enter(r);
   }

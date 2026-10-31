@@ -71,6 +71,20 @@ const SUFFIX = ['', '2', "'"];
 
 export function scramble(puzzle = 3) {
   const out = [];
+  if (puzzle === 4) {
+    const bases = ['U', 'D', 'R', 'L', 'F', 'B', 'Uw', 'Rw', 'Fw'];
+    const ax = { U: 0, D: 0, Uw: 0, R: 1, L: 1, Rw: 1, F: 2, B: 2, Fw: 2 };
+    const baseOf = (m) => m.replace(/['2]/g, '');
+    while (out.length < 40) {
+      const b = bases[Math.floor(Math.random() * bases.length)];
+      const a = out[out.length - 1] && baseOf(out[out.length - 1]);
+      const c = out[out.length - 2] && baseOf(out[out.length - 2]);
+      if (a === b) continue;
+      if (a && c && ax[a] === ax[b] && ax[c] === ax[b]) continue;
+      out.push(b + SUFFIX[Math.floor(Math.random() * 3)]);
+    }
+    return out.join(' ');
+  }
   if (puzzle === 2) {
     while (out.length < 11) {
       const f = ['R', 'U', 'F'][Math.floor(Math.random() * 3)];
@@ -122,7 +136,7 @@ function broadcast(room) {
 }
 
 function newRoom(puzzle) {
-  const room = { code: roomCode(), puzzle: puzzle === 2 ? 2 : 3, round: 1, scrambles: [scramble(puzzle)], players: new Map(), results: [{}], host: null, touched: Date.now() };
+  const room = { code: roomCode(), puzzle: [2, 3, 4].includes(puzzle) ? puzzle : 3, round: 1, scrambles: [scramble(puzzle)], players: new Map(), results: [{}], host: null, touched: Date.now() };
   rooms.set(room.code, room);
   return room;
 }
@@ -160,7 +174,7 @@ function saveProfile(code, profile) {
 }
 
 /** Zeiten-Listen werden vereinigt (über den Zeitstempel), alles andere: neuester Stand gewinnt. */
-const UNION_KEYS = new Set(['solves', 'solves2']);
+const UNION_KEYS = new Set(['solves', 'solves2', 'solves4']);
 
 export function mergeProfile(server, client) {
   const keys = { ...server.keys };

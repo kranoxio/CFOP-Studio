@@ -2,7 +2,6 @@ import '@fontsource-variable/inter';
 import '@fontsource/jetbrains-mono/500.css';
 import '@fontsource/jetbrains-mono/700.css';
 import './styles.css';
-import { parseAlg } from './cube/notation';
 import { h } from './ui/dom';
 import { SolverView } from './ui/solverView';
 import { warmupSolver } from './solver/client';
@@ -11,7 +10,7 @@ import { settings } from './settings';
 import { smartCube } from './smartcube/smartcube';
 import { openSettings } from './ui/settingsPanel';
 import { applyAppearance } from './ui/theme';
-import { setPuzzle } from './ui/puzzle';
+import { parseFor, setPuzzle } from './ui/puzzle';
 import { startAutoSync } from './net/sync';
 
 type TabId = 'solver' | 'algs' | 'trainer' | 'timer' | 'stats';
@@ -99,7 +98,7 @@ renderCubeChip();
 const puzzleBtn = h('div', { class: 'seg-tabs puzzle-switch', title: 'Puzzle wählen' });
 const renderPuzzleBtn = () => {
   puzzleBtn.replaceChildren(
-    ...([3, 2] as const).map((p) => h('button', { class: `seg ${settings.puzzle === p ? 'active' : ''}`, onclick: () => setPuzzle(p) }, p === 3 ? '3×3' : '2×2')),
+    ...([3, 2, 4] as const).map((p) => h('button', { class: `seg ${settings.puzzle === p ? 'active' : ''}`, onclick: () => setPuzzle(p) }, `${p}×${p}`)),
   );
 };
 renderPuzzleBtn();
@@ -142,7 +141,7 @@ document.addEventListener('show-reconstruction', (e) => {
 });
 document.addEventListener('show-scramble', (e) => {
   show('solver');
-  solver.loadScramble(parseAlg((e as CustomEvent<string>).detail));
+  solver.loadScramble(parseFor((e as CustomEvent<string>).detail));
 });
 
 applyAppearance();

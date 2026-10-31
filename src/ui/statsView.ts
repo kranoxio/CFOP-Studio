@@ -30,8 +30,8 @@ export class StatsView {
 
   private render() {
     clear(this.body);
-    const solves: SolveRecord[] = storage.get(settings.puzzle === 2 ? 'solves2' : 'solves', []);
-    const puzzle = settings.puzzle === 2 ? '2×2' : '3×3';
+    const solves: SolveRecord[] = storage.get(settings.puzzle === 3 ? 'solves' : `solves${settings.puzzle}`, []);
+    const puzzle = `${settings.puzzle}×${settings.puzzle}`;
     this.body.append(h('h2', { class: 'stats-title' }, `Statistik ${puzzle}`));
 
     // Kennzahlen

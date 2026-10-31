@@ -1,15 +1,16 @@
-import { applyMoves, type Move } from '../cube/cube';
-import { formatAlg, parseAlg } from '../cube/notation';
+import type { Move } from '../cube/cube';
+import { formatAlg } from '../cube/notation';
 import { settings } from '../settings';
-import { scrambleFor, setPuzzle } from './puzzle';
+import { parseFor, scrambleFor, setPuzzle, wcaStart } from './puzzle';
 import { battlePanel } from './battlePanel';
 import { battle } from '../net/battle';
 import { storage } from '../util/storage';
-import { WCA_START, smartCube, type SmartMove } from '../smartcube/smartcube';
+import { smartCube, type SmartMove } from '../smartcube/smartcube';
 import { ScrambleTracker } from '../smartcube/tracker';
 import { MILESTONE_LABEL, SplitTracker, type Milestone } from '../smartcube/splits';
 import { clear, fmtTime, h, toast } from './dom';
-import { netDiagram, netDiagram2 } from './caseDiagram';
+import { netDiagram, netDiagram2, netDiagram4 } from './caseDiagram';
+import { engineFor } from '../cube/engine';
 import { smartCubeCard } from './settingsPanel';
 
 export interface Solve {
@@ -25,7 +26,7 @@ export interface Solve {
 }
 
 /** Eigene Session je Puzzle */
-const solvesKey = () => (settings.puzzle === 2 ? 'solves2' : 'solves');
+const solvesKey = () => (settings.puzzle === 3 ? 'solves' : `solves${settings.puzzle}`);
 
 const effective = (s: Solve) => (s.penalty === 'DNF' ? Infinity : s.ms + (s.penalty === '+2' ? 2000 : 0));
 
@@ -124,7 +125,7 @@ export class TimerView {
       if (key === lastRound || this.state === 'running' || this.smartPhase === 'running') return;
       lastRound = key;
       if (st.puzzle !== settings.puzzle) setPuzzle(st.puzzle);
-      this.scramble = parseAlg(st.scramble);
+      this.scramble = parseFor(st.scramble, st.puzzle);
       this.renderScramble();
       if (smartCube.connected && settings.puzzle === 3) this.setupSmart();
     });
@@ -218,9 +219,9 @@ export class TimerView {
     this.tracker?.stop();
     this.tracker = null;
     clear(this.smartEl);
-    if (!smartCube.connected || settings.puzzle === 2) {
+    if (!smartCube.connected || settings.puzzle !== 3) {
       this.smartPhase = 'off';
-      if (settings.puzzle === 2) {
+      if (settings.puzzle !== 3) {
         this.helpEl.textContent = 'Leertaste halten (oder hier gedrückt halten) → loslassen startet. Beliebige Taste stoppt.';
         return;
       }
@@ -325,14 +326,14 @@ export class TimerView {
   /** Im Battle-Raum: Zeit melden, sofern der Scramble der aktuellen Runde gelöst wurde */
   private reportBattle(ms: number) {
     const st = battle.state;
-    if (!st || formatAlg(parseAlg(st.scramble)) !== formatAlg(this.scramble)) return;
+    if (!st || formatAlg(parseFor(st.scramble, st.puzzle)) !== formatAlg(this.scramble)) return;
     battle.submit(ms).catch((e) => toast(`Battle: ${e.message}`));
   }
 
   private newScramble() {
     // Im Battle-Raum gilt immer der Scramble des Raums, bis der Gastgeber weiterschaltet
     if (battle.state) {
-      this.scramble = parseAlg(battle.state.scramble);
+      this.scramble = parseFor(battle.state.scramble, battle.state.puzzle);
       this.renderScramble();
       if (smartCube.connected && settings.puzzle === 3 && this.smartPhase !== 'running') this.setupSmart();
       return;
@@ -346,12 +347,12 @@ export class TimerView {
     clear(this.scrambleEl);
     this.scrambleEl.append(formatAlg(this.scramble));
     clear(this.previewEl);
-    const st = applyMoves(WCA_START, this.scramble);
-    this.previewEl.append(settings.puzzle === 2 ? netDiagram2(st, 180) : netDiagram(st, 220));
+    const st = this.scramble.reduce((s, m) => engineFor(settings.puzzle).apply(s, m), wcaStart());
+    this.previewEl.append(settings.puzzle === 2 ? netDiagram2(st, 180) : settings.puzzle === 4 ? netDiagram4(st, 230) : netDiagram(st, 220));
   }
 
   private renderStats() {
-    this.sessionTitle.textContent = `Session ${settings.puzzle === 2 ? '2×2' : '3×3'}`;
+    this.sessionTitle.textContent = `Session ${settings.puzzle}×${settings.puzzle}`;
     clear(this.statsEl);
     const valid = this.solves.map(effective).filter(isFinite);
     const stat = (label: string, v: number | null) => h('div', { class: 'stat' }, h('b', null, v === null ? '–' : fmtTime(v)), h('span', null, label));

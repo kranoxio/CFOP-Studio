@@ -3,6 +3,15 @@ import { f2lSolved, ollSolved, isSolved, SLOTS, slotSolved, crossSolved, llCorne
 import { formatAlg, invertAlg, netRotationFix, parseAlg, removeRotations, tryParseAlg } from '../cube/notation';
 import { ALL_CASES, CASE_BY_ID, type AlgCase } from './data';
 import { bottomFace, cornersHome, normalizeAlg2, toCornerMoves, topOriented } from '../cube/cube2';
+import { applyMoves4, color4, geometry4, isSolved4, normalizeAlg4, parseAlg4, rotationToHome4, solved4 } from '../cube/cube4';
+
+const tryParse4 = (t: string) => {
+  try {
+    return parseAlg4(t);
+  } catch {
+    return null;
+  }
+};
 import { OH_ALGS } from './oh';
 import { storage } from '../util/storage';
 
@@ -78,12 +87,40 @@ export function getCase(id: string): AlgCase {
 
 /** Züge eines Algs für diesen Fall (2x2: nur Eckenwirkung, ohne Slices). */
 export function algMoves(c: AlgCase, text: string): Move[] {
-  return c.puzzle === 2 ? normalizeAlg2(text) : normalizeAlg(text);
+  return c.puzzle === 2 ? normalizeAlg2(text) : c.puzzle === 4 ? normalizeAlg4(text) : normalizeAlg(text);
 }
 
 /** Zustand, den ein Fall vor Ausführung des Algs darstellt. */
 export function caseState(c: AlgCase, alg = preferredAlg(c)): State {
+  if (c.puzzle === 4) return applyMoves4(solved4(), invertAlg(algMoves(c, alg)));
   return applyMoves(solvedState(), invertAlg(algMoves(c, alg)));
+}
+
+/** 4x4: alles ausser der oberen Schicht gelöst und oben gelb (OLL) bzw. alles gelöst (PLL) */
+function validate4(c: AlgCase, moves: Move[]): ValidationResult {
+  const start = caseState(c, c.algs[0]);
+  const fixed = [...moves, ...rotationToHome4(applyMoves4(solved4(), moves))];
+  const U4: Move[][] = [[], [{ base: 'U', amount: 1 }], [{ base: 'U', amount: 2 }], [{ base: 'U', amount: 3 }]];
+  for (const pre of U4) {
+    const mid = applyMoves4(start, [...pre, ...fixed]);
+    for (const post of U4) {
+      const end = applyMoves4(mid, post);
+      const ok = c.set === '4OLL' ? topOriented4(end) : isSolved4(end);
+      if (ok) return { ok: true, message: `Alg löst den Fall${pre.length ? ` (mit ${formatAlg(pre)} davor)` : ''}` };
+    }
+  }
+  return { ok: false, message: 'Alg löst diesen Fall nicht' };
+}
+
+/** Oben alles gelb und darunter alles gelöst (relativ zu den Zentren) */
+export function topOriented4(s: State): boolean {
+  for (let i = 0; i < 96; i++) {
+    const face = Math.floor(i / 16);
+    // Seiten-Sticker der oberen Schicht sind bei OLL egal
+    if (geometry4(i).p[1] === 3 && face !== 0) continue;
+    if (color4(s, i) !== face) return false;
+  }
+  return true;
 }
 
 const U_ADJ: Move[][] = [[], [{ base: 'U', amount: 1 }], [{ base: 'U', amount: 2 }], [{ base: 'U', amount: 3 }]];
@@ -113,9 +150,14 @@ export interface ValidationResult {
 
 /** Prüft, ob ein (eigener) Alg den Fall wirklich löst. */
 export function validateAlg(c: AlgCase, text: string): ValidationResult {
+  if (c.puzzle === 4) {
+    const m4 = tryParse4(text);
+    return m4?.length ? validate4(c, m4) : { ok: false, message: 'Notation nicht lesbar' };
+  }
   const moves = tryParseAlg(text);
   if (!moves || moves.length === 0) return { ok: false, message: 'Notation nicht lesbar' };
   if (c.puzzle === 2) return validate2(c, moves);
+
   const start = caseState(c, c.algs[0]);
   const fixed = [...moves, ...netRotationFix(moves)];
   const aufs: Move[][] = [[], [{ base: 'U', amount: 1 }], [{ base: 'U', amount: 2 }], [{ base: 'U', amount: 3 }]];

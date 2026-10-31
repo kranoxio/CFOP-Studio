@@ -22,7 +22,7 @@ export interface Settings {
   crossGoal: 'cross' | 'xcross';
   crossInspection: boolean;
   /** Aktives Puzzle */
-  puzzle: 2 | 3;
+  puzzle: 2 | 3 | 4;
   /** Methode für den 2x2 (bestimmt die verwendeten Alg-Kategorien) */
   method2: 'ortega' | 'cll' | 'eg';
   /** Zusätzliche 3x3-Sets im Solver */

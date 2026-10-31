@@ -176,3 +176,19 @@ export function netDiagram2(s: State, width = 200): SVGSVGElement {
   }
   return svg;
 }
+
+/** 4x4-Netz für die Timer-Vorschau */
+export function netDiagram4(s: State, width = 230): SVGSVGElement {
+  const c = 7;
+  const gap = 3;
+  const fw = c * 4 + gap;
+  const svg = svgEl('svg', { viewBox: `0 0 ${fw * 4} ${fw * 3}`, width, class: 'net-diagram' });
+  const off: Record<number, [number, number]> = { 0: [1, 0], 4: [0, 1], 2: [1, 1], 1: [2, 1], 5: [3, 1], 3: [1, 2] };
+  for (let f = 0; f < 6; f++) {
+    const [fx, fy] = off[f];
+    for (let k = 0; k < 16; k++) {
+      svg.append(svgEl('rect', { x: fx * fw + (k % 4) * c + 0.5, y: fy * fw + Math.floor(k / 4) * c + 0.5, width: c - 1, height: c - 1, rx: 1.2, fill: FACE_COLORS[Math.floor(s[f * 16 + k] / 16)] }));
+    }
+  }
+  return svg;
+}

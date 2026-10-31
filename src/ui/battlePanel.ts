@@ -42,7 +42,7 @@ export function battlePanel(): HTMLElement {
       .sort((a, b) => (a.r ? effectiveMs(a.r) : Infinity) - (b.r ? effectiveMs(b.r) : Infinity));
     const link = `${location.origin}${location.pathname}#battle=${s.code}`;
     box.append(
-      h('div', { class: 'battle-round' }, h('b', null, `Runde ${s.round}`), h('span', { class: 'muted small' }, `${s.puzzle === 2 ? '2×2' : '3×3'} · ${Object.keys(round).length}/${s.players.length} fertig`)),
+      h('div', { class: 'battle-round' }, h('b', null, `Runde ${s.round}`), h('span', { class: 'muted small' }, `${s.puzzle}×${s.puzzle} · ${Object.keys(round).length}/${s.players.length} fertig`)),
       h('div', { class: 'battle-list' },
         ...ranked.map(({ p, r }, i) =>
           h('div', { class: `battle-row ${p.id === battle.playerId ? 'me' : ''}` },

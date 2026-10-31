@@ -39,7 +39,7 @@ export class TrainerView {
     );
     this.renderTabs();
     document.addEventListener('puzzle-change', () => {
-      if (settings.puzzle === 2 && this.mode !== this.recog) this.switchMode(this.recog);
+      if (!this.available(this.mode)) this.switchMode(this.recog);
       else if (this.active) this.startMode();
       this.renderTabs();
     });

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
-import { MOVE_DEFS, geometry, type Move, type State } from '../cube/cube';
+import type { Move, State } from '../cube/cube';
+import { engineFor, type Engine, type PuzzleSize } from '../cube/engine';
 
 /** Leuchtende, "stickerless" Farben im Stil moderner Speedcubes (U R F D L B). */
 export const FACE_COLORS = ['#ffd500', '#ff6b00', '#00c853', '#f4f6fb', '#e8102a', '#1a5cff'];
@@ -92,55 +93,51 @@ export class CubeModel {
   private rests: THREE.Vector3[] = [];
   /** Gezeichnete Facelets (3x3: alle 54, 2x2: nur die 24 Ecken); Instanz i zeigt facelets[i] */
   private facelets: number[] = [];
-  readonly size: 2 | 3;
+  readonly size: PuzzleSize;
+  readonly engine: Engine;
   private bodies: THREE.InstancedMesh;
   private tiles: THREE.InstancedMesh;
   private tileLocal: THREE.Matrix4[] = [];
   private cubieOfFacelet: number[] = [];
   private shared: SharedAssets;
   /** Zuletzt gemalte Farben, um unnötige GPU-Uploads zu vermeiden */
-  private lastColor: (THREE.Color | null)[] = new Array(54).fill(null);
+  private lastColor: (THREE.Color | null)[] = [];
   private turnKey = '';
 
-  constructor(quality: Quality = 'high', size: 2 | 3 = 3) {
+  constructor(quality: Quality = 'high', size: PuzzleSize = 3) {
     this.size = size;
+    this.engine = engineFor(size);
+    const e = this.engine;
     this.shared = assets(quality);
-    const isCorner = (x: number, y: number, z: number) => x !== 0 && y !== 0 && z !== 0;
-    for (let i = 0; i < 54; i++) {
-      const { p } = geometry(i);
-      if (size === 3 || isCorner(p[0], p[1], p[2])) this.facelets.push(i);
-    }
-    this.bodies = new THREE.InstancedMesh(this.shared.body, this.shared.bodyMat, size === 3 ? 26 : 8);
+    this.facelets = e.facelets;
+    this.lastColor = new Array(this.facelets.length).fill(null);
+    this.bodies = new THREE.InstancedMesh(this.shared.body, this.shared.bodyMat, e.cubies.length);
     this.tiles = new THREE.InstancedMesh(this.shared.tile, this.shared.tileMat, this.facelets.length);
-    // Der 2x2 wird etwas grösser dargestellt, damit er ähnlich wirkt wie der 3x3
-    if (size === 2) this.root.scale.setScalar(1.3);
+    // 2x2 etwas grösser, 4x4 etwas kleiner, damit alle ähnlich gross wirken
+    this.root.scale.setScalar(e.scale);
     for (const m of [this.bodies, this.tiles]) {
       m.frustumCulled = false;
       m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       this.root.add(m);
     }
     const index = new Map<string, number>();
-    for (let x = -1; x <= 1; x++)
-      for (let y = -1; y <= 1; y++)
-        for (let z = -1; z <= 1; z++) {
-          if (x === 0 && y === 0 && z === 0) continue;
-          if (size === 2 && !isCorner(x, y, z)) continue;
-          const o = new THREE.Object3D();
-          const rest = new THREE.Vector3(x, y, z).multiplyScalar(size === 2 ? 0.5 : 1);
-          o.position.copy(rest);
-          index.set(`${x},${y},${z}`, this.cubies.length);
-          this.cubies.push(o);
-          this.homes.push(new THREE.Vector3(x, y, z));
-          this.rests.push(rest);
-        }
+    for (const [x, y, z] of e.cubies) {
+      const o = new THREE.Object3D();
+      const rest = new THREE.Vector3(x, y, z).multiplyScalar(e.spacing);
+      o.position.copy(rest);
+      index.set(`${x},${y},${z}`, this.cubies.length);
+      this.cubies.push(o);
+      this.homes.push(new THREE.Vector3(x, y, z));
+      this.rests.push(rest);
+    }
     const z = new THREE.Vector3(0, 0, 1);
     this.facelets.forEach((f, i) => {
-      const { p, n } = geometry(f);
+      const { p, n } = e.geometry(f);
       this.cubieOfFacelet.push(index.get(p.join(','))!);
       const normal = new THREE.Vector3(...n);
       const local = new THREE.Matrix4().compose(normal.clone().multiplyScalar(0.475), new THREE.Quaternion().setFromUnitVectors(z, normal), new THREE.Vector3(1, 1, 1));
       this.tileLocal.push(local);
-      this.tiles.setColorAt(i, this.shared.colors.color[Math.floor(f / 9)]);
+      this.tiles.setColorAt(i, this.shared.colors.color[e.faceOf(f)]);
     });
     this.commit();
   }
@@ -151,7 +148,7 @@ export class CubeModel {
     let changed = false;
     for (let i = 0; i < this.facelets.length; i++) {
       const home = v.state[this.facelets[i]];
-      const c = colors[v.look ? v.look(home) : 'color'][Math.floor(home / 9)];
+      const c = colors[v.look ? v.look(home) : 'color'][this.engine.faceOf(home)];
       if (this.lastColor[i] !== c) {
         this.lastColor[i] = c;
         this.tiles.setColorAt(i, c);
@@ -172,7 +169,8 @@ export class CubeModel {
       this.cubies[i].quaternion.identity();
     }
     if (move && progress > 0) {
-      const def = MOVE_DEFS[move.base];
+      const def = this.engine.def(move.base);
+      if (!def) return this.commit();
       const turns = move.amount === 3 ? -1 : move.amount;
       tmpAxis.set(def.axis === 0 ? 1 : 0, def.axis === 1 ? 1 : 0, def.axis === 2 ? 1 : 0);
       tmpQuat.setFromAxisAngle(tmpAxis, def.dir * turns * (Math.PI / 2) * progress);
@@ -210,7 +208,7 @@ export class CubeModel {
   /** Weltposition einer logischen Koordinate (±1/0) – berücksichtigt 2x2-Abstand und Skalierung */
   worldOf(logical: THREE.Vector3): THREE.Vector3 {
     this.root.updateMatrixWorld();
-    return this.root.localToWorld(logical.clone().multiplyScalar(this.size === 2 ? 0.5 : 1));
+    return this.root.localToWorld(logical.clone().multiplyScalar(this.engine.spacing));
   }
 
   /** Für die Intro-Animation: Cubies einzeln versetzen (Ruheposition), danach commit() aufrufen. */

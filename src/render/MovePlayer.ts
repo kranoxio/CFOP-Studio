@@ -1,4 +1,5 @@
-import { applyMove, isRotation, solvedState, type Move, type State } from '../cube/cube';
+import { isRotation, type Move, type State } from '../cube/cube';
+import { engineFor, type Engine } from '../cube/engine';
 
 export const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 export const easeOutSnap = (t: number) => 1 - Math.pow(1 - t, 3.2);
@@ -35,7 +36,9 @@ export interface PlayerFrame {
  */
 export class MovePlayer {
   moves: Move[] = [];
-  states: State[] = [solvedState()];
+  /** Puzzle, dessen Züge abgespielt werden (bestimmt, wie ein Zug den Zustand ändert) */
+  engine: Engine = engineFor(3);
+  states: State[] = [engineFor(3).solved()];
   /** Anzahl vollständig ausgeführter Züge */
   index = 0;
   private progress = 0;
@@ -56,7 +59,7 @@ export class MovePlayer {
   load(base: State, moves: Move[], index = 0) {
     this.moves = moves;
     this.states = [base];
-    for (const m of moves) this.states.push(applyMove(this.states[this.states.length - 1], m));
+    for (const m of moves) this.states.push(this.engine.apply(this.states[this.states.length - 1], m));
     this.index = Math.min(index, moves.length);
     this.progress = 0;
     this.reverse = false;
@@ -69,7 +72,7 @@ export class MovePlayer {
   extend(moves: Move[]) {
     for (const m of moves) {
       this.moves.push(m);
-      this.states.push(applyMove(this.states[this.states.length - 1], m));
+      this.states.push(this.engine.apply(this.states[this.states.length - 1], m));
     }
   }
 

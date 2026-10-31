@@ -1,4 +1,5 @@
-import { applyMoves, moveToString, solvedState, type Move } from '../cube/cube';
+import { moveToString, type Move } from '../cube/cube';
+import { engineFor } from '../cube/engine';
 import { conjugateAlg, formatAlg, invertAlg, parseAlg, simplify } from '../cube/notation';
 import type { SlotName } from '../cube/analysis';
 import { SLOT_ROTATION } from '../solver/cfop';
@@ -21,7 +22,7 @@ export class AlgsView {
   private grid: GridRenderer | null = null;
   private scroll: HTMLElement;
   private gridEl = h('div', { class: 'alg-grid' });
-  private set: AlgSet = settings.puzzle === 2 ? '2OLL' : 'OLL';
+  private set: AlgSet = SETS_BY_PUZZLE[settings.puzzle][settings.puzzle === 3 ? 1 : 0];
   private group = 'Alle';
   private query = '';
   private filter: 'all' | 'fav' | LearnStatus = 'all';
@@ -98,7 +99,7 @@ export class AlgsView {
     );
     document.addEventListener('alg-style-change', () => this.grid && this.renderGrid());
     document.addEventListener('puzzle-change', () => {
-      if (!SETS_BY_PUZZLE[settings.puzzle].includes(this.set)) this.set = SETS_BY_PUZZLE[settings.puzzle][settings.puzzle === 2 ? 0 : 1];
+      if (!SETS_BY_PUZZLE[settings.puzzle].includes(this.set)) this.set = SETS_BY_PUZZLE[settings.puzzle][settings.puzzle !== 3 ? 0 : 1];
       this.group = 'Alle';
       if (this.grid) {
         this.renderTabs();
@@ -217,7 +218,7 @@ export class AlgsView {
       );
       this.cardEls.set(c.id, card);
       this.gridEl.append(card);
-      cells.push({ el: view, base: caseState(c), moves: algMoves(c, alg), look: lookFor(c.set), view: ['F2L', 'WV', 'VLS'].includes(c.set) ? ('side' as const) : ('top' as const), size: c.puzzle === 2 ? (2 as const) : (3 as const) });
+      cells.push({ el: view, base: caseState(c), moves: algMoves(c, alg), look: lookFor(c.set), view: ['F2L', 'WV', 'VLS'].includes(c.set) ? ('side' as const) : ('top' as const), size: c.puzzle ?? 3 });
     }
     if (!cases.length) this.gridEl.append(h('div', { class: 'empty muted' }, 'Keine Fälle für diesen Filter.'));
     this.grid?.setCells(cells);
@@ -276,7 +277,8 @@ export class AlgsView {
     const load = () => {
       if (!view) return;
       const moves = slotMoves();
-      const start = applyMoves(solvedState(), invertAlg(moves));
+      const engine = engineFor(c.puzzle ?? 3);
+      const start = invertAlg(moves).reduce((st, m) => engine.apply(st, m), engine.solved());
       view.player.load(start, moves);
       slotInfo.textContent =
         slot === 'FR' || !slotPicker
@@ -286,7 +288,7 @@ export class AlgsView {
       renderChips(moves);
       clear(diagram);
       if (c.puzzle === 2) diagram.append(llDiagram2(caseState(c, algText), c.set === '2OLL' ? 'oll' : 'all', 110));
-      else if (c.set !== 'F2L') diagram.append(llDiagram(caseState(c, algText), c.set === 'OLL' ? 'oll' : 'pll', 110));
+      else if (c.puzzle !== 4 && c.set !== 'F2L') diagram.append(llDiagram(caseState(c, algText), c.set === 'OLL' ? 'oll' : 'pll', 110));
       setTimeout(() => view?.player.play(), 500);
     };
     const renderChips = (moves: Move[]) => {
@@ -443,7 +445,7 @@ export class AlgsView {
     requestAnimationFrame(() => {
       if (!this.detailView) this.detailView = new CubeView(stage, { cameraDistance: 9.5 });
       else this.detailView.mount(stage);
-      this.detailView.setPuzzle(c.puzzle === 2 ? 2 : 3);
+      this.detailView.setPuzzle(c.puzzle ?? 3);
       view = this.detailView;
       view.setRunning(true);
       view.showArrows = true;

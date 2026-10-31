@@ -177,7 +177,7 @@ export function openSettings() {
         return h('label', { class: 'toggle' }, t, h('span', { class: 'toggle-ui' }));
       })()),
       h('h4', null, 'Puzzle'),
-      row('Würfel', '3×3 (CFOP) oder 2×2', segmented(String(settings.puzzle) as '3' | '2', [['3', '3×3'], ['2', '2×2']], (v) => setPuzzle(v === '2' ? 2 : 3))),
+      row('Würfel', '3×3 (CFOP), 2×2 oder 4×4', segmented(String(settings.puzzle) as '3' | '2' | '4', [['3', '3×3'], ['2', '2×2'], ['4', '4×4']], (v) => setPuzzle(Number(v) as 2 | 3 | 4))),
       row('2×2-Methode', 'Bestimmt, welche Alg-Kategorien der 2×2-Solver nutzt: Ortega = OLL + PBL, CLL = erste Ebene + CLL, EG = erste Seite + CLL/EG-1/EG-2', segmented(settings.method2, [['ortega', 'Ortega'], ['cll', 'CLL'], ['eg', 'EG']], (v) => {
         settings.method2 = v;
         saveSettings();

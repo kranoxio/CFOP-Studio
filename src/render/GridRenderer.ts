@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import type { Move, State } from '../cube/cube';
 import { CubeModel, type StickerLook } from './CubeModel';
+import { engineFor, type PuzzleSize } from '../cube/engine';
 import { MovePlayer } from './MovePlayer';
 import { perf } from './perf';
 
@@ -11,7 +12,7 @@ export interface GridCell {
   moves: Move[];
   look?: (home: number) => StickerLook;
   view: 'side' | 'top';
-  size?: 2 | 3;
+  size?: PuzzleSize;
 }
 
 interface CellRuntime extends GridCell {
@@ -33,7 +34,7 @@ interface CellRuntime extends GridCell {
 export class GridRenderer {
   readonly renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
-  private models = { 3: new CubeModel('low', 3), 2: new CubeModel('low', 2) };
+  private models: Partial<Record<PuzzleSize, CubeModel>> = {};
   private cams = {
     side: new THREE.PerspectiveCamera(30, 1, 0.1, 50),
     top: new THREE.PerspectiveCamera(30, 1, 0.1, 50),
@@ -64,7 +65,7 @@ export class GridRenderer {
     pmrem.dispose();
     const key = new THREE.DirectionalLight('#ffffff', 1.0);
     key.position.set(4, 8, 6);
-    this.scene.add(key, new THREE.AmbientLight('#ffffff', 0.3), this.models[3].root, this.models[2].root);
+    this.scene.add(key, new THREE.AmbientLight('#ffffff', 0.3));
 
     this.cams.side.position.set(0.62, 0.55, 1).normalize().multiplyScalar(9.6);
     this.cams.side.lookAt(0, 0, 0);
@@ -84,6 +85,18 @@ export class GridRenderer {
     this.renderer.setAnimationLoop(() => this.tick());
   }
 
+  /** Je Puzzle ein Modell, erst bei Bedarf erzeugt; nur das aktuelle ist sichtbar */
+  private modelFor(size: PuzzleSize): CubeModel {
+    let m = this.models[size];
+    if (!m) {
+      m = new CubeModel('low', size);
+      this.models[size] = m;
+      this.scene.add(m.root);
+    }
+    for (const [k, other] of Object.entries(this.models)) other!.root.visible = Number(k) === size;
+    return m;
+  }
+
   private resize() {
     this.renderer.setSize(window.innerWidth, window.innerHeight, false);
   }
@@ -98,6 +111,7 @@ export class GridRenderer {
   setCells(cells: GridCell[]) {
     this.cells = cells.map((c) => {
       const player = new MovePlayer();
+      player.engine = engineFor(c.size ?? 3);
       player.load(c.base, c.moves);
       return { ...c, player, hold: Math.random() * 0.8, phase: 'start' as const, rect: null };
     });
@@ -145,10 +159,7 @@ export class GridRenderer {
       if (!fullRedraw && c.player.position === before) continue;
 
       const f = c.player.frame();
-      const size = c.size ?? 3;
-      const model = this.models[size];
-      this.models[3].root.visible = size === 3;
-      this.models[2].root.visible = size === 2;
+      const model = this.modelFor(c.size ?? 3);
       model.paint({ state: f.state, look: c.look });
       model.setTurn(f.move, f.progress);
 

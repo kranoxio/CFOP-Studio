@@ -1,7 +1,8 @@
-import { applyMoves, moveToString, solvedState, type Move } from '../../cube/cube';
+import { moveToString, type Move } from '../../cube/cube';
 import { invertAlg } from '../../cube/notation';
 import { ALL_CASES, SETS_BY_PUZZLE, SET_LABEL, caseTitle, type AlgCase, type AlgSet, type Puzzle } from '../../algs/data';
 import { settings } from '../../settings';
+import { engineFor } from '../../cube/engine';
 import { storage } from '../../util/storage';
 import { algMoves, preferredAlg } from '../../algs/registry';
 import { progress, type Grade } from '../../progress';
@@ -14,7 +15,7 @@ type Pool = 'srs' | 'all' | 'fav' | 'learning' | 'notLearned';
 
 const U = (n: number): Move[] => (n ? [{ base: 'U', amount: n as 1 | 2 | 3 }] : []);
 const D = (n: number): Move[] => (n ? [{ base: 'D', amount: n as 1 | 2 | 3 }] : []);
-const SET_PHASE: Record<AlgSet, keyof typeof PHASE_COLORS> = { F2L: 'f2l', OLL: 'oll', PLL: 'pll', COLL: 'coll', ZBLL: 'zbll', WV: 'ls', VLS: 'ls', '2OLL': 'oll', PBL: 'pbl', CLL: 'cll', EG1: 'eg', EG2: 'eg' };
+const SET_PHASE: Record<AlgSet, keyof typeof PHASE_COLORS> = { F2L: 'f2l', OLL: 'oll', PLL: 'pll', COLL: 'coll', ZBLL: 'zbll', WV: 'ls', VLS: 'ls', '2OLL': 'oll', PBL: 'pbl', CLL: 'cll', EG1: 'eg', EG2: 'eg', '4OLL': 'oll', '4PLL': 'pll' };
 
 /** Erkennungs-Trainer: Fall erkennen, aufdecken, bewerten. Schwache Fälle kommen öfter. */
 export class RecogMode implements TrainerMode {
@@ -22,7 +23,7 @@ export class RecogMode implements TrainerMode {
   readonly label = 'Erkennung';
   private ctx: TrainerContext | null = null;
   /** Gewählte Kategorien je Puzzle (Mehrfachauswahl) */
-  private sets: Record<Puzzle, AlgSet[]> = storage.get('recogSets', { 3: ['PLL'], 2: ['CLL'] } as Record<Puzzle, AlgSet[]>);
+  private sets: Record<Puzzle, AlgSet[]> = storage.get('recogSets', { 3: ['PLL'], 2: ['CLL'], 4: ['4PLL'] } as Record<Puzzle, AlgSet[]>);
   private pool: Pool = 'srs';
   private current: AlgCase | null = null;
   private shownAt = 0;
@@ -37,7 +38,7 @@ export class RecogMode implements TrainerMode {
   /** Einen bestimmten Fall als Nächstes zeigen. */
   train(id: string) {
     const c = ALL_CASES.find((x) => x.id === id);
-    if (c) this.sets[c.puzzle === 2 ? 2 : 3] = [c.set];
+    if (c) this.sets[c.puzzle ?? 3] = [c.set];
     this.forced = id;
     if (this.ctx) {
       this.renderTabs();
@@ -88,7 +89,7 @@ export class RecogMode implements TrainerMode {
   private get active(): AlgSet[] {
     const p = settings.puzzle;
     const valid = this.sets[p]?.filter((x) => SETS_BY_PUZZLE[p].includes(x)) ?? [];
-    return valid.length ? valid : [SETS_BY_PUZZLE[p][2]]; // Standard: PLL bzw. CLL
+    return valid.length ? valid : [SETS_BY_PUZZLE[p][Math.min(2, SETS_BY_PUZZLE[p].length - 1)]]; // Standard: PLL / CLL / PLL-Parität
   }
 
   /** Kategorien als Chips zum An-/Abwählen – mindestens eine bleibt aktiv */
@@ -160,9 +161,10 @@ export class RecogMode implements TrainerMode {
     // Zufällige Farben (PLL) und zufälliger Blickwinkel (AUF)
     // Zufällige Farben (PLL/2x2) und zufälliger Blickwinkel (AUF); am Ende wieder ausgerichtet
     const two = c.puzzle === 2;
-    const preMoves = c.set === 'PLL' ? U(pre) : two && c.set !== '2OLL' ? [...U(pre), ...D(Math.floor(Math.random() * 4))] : [];
-    const start = applyMoves(solvedState(), [...preMoves, ...invertAlg(alg), ...U(post)]);
-    view.setPuzzle(two ? 2 : 3);
+    const preMoves = c.set === 'PLL' || c.set === '4PLL' ? U(pre) : two && c.set !== '2OLL' ? [...U(pre), ...D(Math.floor(Math.random() * 4))] : [];
+    const engine = engineFor(c.puzzle ?? 3);
+    const start = [...preMoves, ...invertAlg(alg), ...U(post)].reduce((s, m) => engine.apply(s, m), engine.solved());
+    view.setPuzzle(c.puzzle ?? 3);
     view.player.load(start, [...U((4 - post) % 4), ...alg, ...invertAlg(preMoves)]);
     view.player.onIndex = null;
     view.look = lookFor(c.set);

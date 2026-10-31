@@ -1,4 +1,4 @@
-import { applyMoves, moveToString, movesPerm, solvedState, type Move, type State } from '../../cube/cube';
+import { applyMoves, moveToString, movesPerm, type Move, type State } from '../../cube/cube';
 import { conjugateMove, formatAlg, htm, invertAlg, parseAlg } from '../../cube/notation';
 import { ALL_CASES, SETS_BY_PUZZLE, SET_LABEL, caseTitle, type AlgCase, type AlgSet, type Puzzle } from '../../algs/data';
 import { algMoves, preferredAlg } from '../../algs/registry';
@@ -6,6 +6,7 @@ import { progress } from '../../progress';
 import { settings } from '../../settings';
 import { sameColors, smartCube, type SmartMove } from '../../smartcube/smartcube';
 import { storage } from '../../util/storage';
+import { engineFor } from '../../cube/engine';
 import { clear, h } from '../dom';
 import { lookFor } from '../looks';
 import { PHASE_COLORS } from '../phases';
@@ -28,7 +29,7 @@ export class DrillMode implements TrainerMode {
   readonly label = 'Drill';
   private ctx: TrainerContext | null = null;
   private current: AlgCase | null = null;
-  private sets: Record<Puzzle, AlgSet[]> = storage.get('drillSets', { 3: ['PLL'], 2: ['CLL'] } as Record<Puzzle, AlgSet[]>);
+  private sets: Record<Puzzle, AlgSet[]> = storage.get('drillSets', { 3: ['PLL'], 2: ['CLL'], 4: ['4PLL'] } as Record<Puzzle, AlgSet[]>);
   private hideAlg = false;
   private targets: State[] = [];
   private phase: 'ready' | 'running' | 'done' = 'ready';
@@ -85,7 +86,7 @@ export class DrillMode implements TrainerMode {
   drill(id: string) {
     const c = ALL_CASES.find((x) => x.id === id);
     if (!c) return;
-    this.sets[c.puzzle === 2 ? 2 : 3] = [c.set];
+    this.sets[c.puzzle ?? 3] = [c.set];
     this.forced = c;
     if (this.ctx) {
       this.renderChips();
@@ -113,7 +114,7 @@ export class DrillMode implements TrainerMode {
   private get active(): AlgSet[] {
     const p = settings.puzzle;
     const v = this.sets[p]?.filter((x) => SETS_BY_PUZZLE[p].includes(x)) ?? [];
-    return v.length ? v : [SETS_BY_PUZZLE[p][2]];
+    return v.length ? v : [SETS_BY_PUZZLE[p][Math.min(2, SETS_BY_PUZZLE[p].length - 1)]];
   }
 
   private renderChips() {
@@ -162,14 +163,15 @@ export class DrillMode implements TrainerMode {
     this.phase = 'ready';
     this.moves = 0;
     const alg = algMoves(c, preferredAlg(c));
-    const start = applyMoves(solvedState(), invertAlg(alg));
+    const engine = engineFor(c.puzzle ?? 3);
+    const start = invertAlg(alg).reduce((s, m) => engine.apply(s, m), engine.solved());
     const v = ctx.view;
-    v.setPuzzle(c.puzzle === 2 ? 2 : 3);
+    v.setPuzzle(c.puzzle ?? 3);
     v.player.load(start, []);
     v.look = lookFor(c.set);
     v.showArrows = false;
     v.setPhaseColor(PHASE_COLORS.oll);
-    v.resetCamera(['F2L', 'WV', 'VLS'].includes(c.set) || c.puzzle === 2 ? 'default' : 'top');
+    v.resetCamera(['F2L', 'WV', 'VLS'].includes(c.set) || c.puzzle === 2 || c.puzzle === 4 ? 'default' : 'top');
     this.timerEl.textContent = '0.00';
     if (this.useSmart()) {
       // Zielzustände des echten Würfels: aktueller Stand + (AUF) Alg (AUF), im Würfel-Rahmen
