@@ -201,6 +201,18 @@ export class CubeModel {
     this.tiles.instanceMatrix.needsUpdate = true;
   }
 
+  /** Welches Facelet trifft der Strahl? (für Wischgesten) */
+  pickFacelet(ray: THREE.Raycaster): number | null {
+    const hit = ray.intersectObject(this.tiles, false)[0];
+    return hit && hit.instanceId !== undefined ? this.facelets[hit.instanceId] : null;
+  }
+
+  /** Weltposition einer logischen Koordinate (±1/0) – berücksichtigt 2x2-Abstand und Skalierung */
+  worldOf(logical: THREE.Vector3): THREE.Vector3 {
+    this.root.updateMatrixWorld();
+    return this.root.localToWorld(logical.clone().multiplyScalar(this.size === 2 ? 0.5 : 1));
+  }
+
   /** Für die Intro-Animation: Cubies einzeln versetzen (Ruheposition), danach commit() aufrufen. */
   forEachCubie(fn: (cubie: THREE.Object3D, rest: THREE.Vector3, index: number) => void) {
     this.cubies.forEach((c, i) => fn(c, this.rests[i], i));

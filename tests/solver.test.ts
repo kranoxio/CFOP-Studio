@@ -49,3 +49,23 @@ describe('CFOP-Solver mit OH-Algs', () => {
     setAlgStyle('2h');
   });
 });
+
+describe('CFOP-Solver mit fortgeschrittenen Sets', () => {
+  for (const adv of [{ wv: true, vls: true }, { coll: true }, { zbll: true }, { wv: true, vls: true, zbll: true, coll: true }]) {
+    it(`löst mit ${Object.keys(adv).join('+')}`, () => {
+      const r = rng(1234);
+      const used = new Map<string, number>();
+      let total = 0;
+      const t0 = performance.now();
+      const n = 60;
+      for (let i = 0; i < n; i++) {
+        const start = applyMoves(applyMoves(solvedState(), parseAlg('z2')), randomScramble(21, r));
+        const sol = solveCFOP(start, { f2lMode: 'alg', adv });
+        expect(isSolved(applyMoves(start, sol.steps.flatMap((s) => s.moves)))).toBe(true);
+        total += sol.moveCount;
+        for (const st of sol.steps) if (st.caseId) used.set(st.caseId.split('-')[0], (used.get(st.caseId.split('-')[0]) ?? 0) + 1);
+      }
+      console.log(Object.keys(adv).join('+'), 'Ø Züge', (total / n).toFixed(1), 'Ø ms', ((performance.now() - t0) / n).toFixed(0), [...used].filter(([k]) => !['F2L'].includes(k)).map(([k, v]) => `${k}:${v}`).join(' '));
+    }, 120000);
+  }
+});

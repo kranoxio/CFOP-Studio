@@ -4,17 +4,17 @@ import { ALL_CASES, SETS_BY_PUZZLE, SET_LABEL, caseTitle, type AlgCase, type Alg
 import { settings } from '../../settings';
 import { storage } from '../../util/storage';
 import { algMoves, preferredAlg } from '../../algs/registry';
-import { progress } from '../../progress';
+import { progress, type Grade } from '../../progress';
 import { clear, h } from '../dom';
 import { lookFor } from '../looks';
 import { PHASE_COLORS } from '../phases';
 import type { TrainerContext, TrainerMode } from './types';
 
-type Pool = 'all' | 'fav' | 'learning' | 'notLearned';
+type Pool = 'srs' | 'all' | 'fav' | 'learning' | 'notLearned';
 
 const U = (n: number): Move[] => (n ? [{ base: 'U', amount: n as 1 | 2 | 3 }] : []);
 const D = (n: number): Move[] => (n ? [{ base: 'D', amount: n as 1 | 2 | 3 }] : []);
-const SET_PHASE: Record<AlgSet, keyof typeof PHASE_COLORS> = { F2L: 'f2l', OLL: 'oll', PLL: 'pll', '2OLL': 'oll', PBL: 'pbl', CLL: 'cll', EG1: 'eg', EG2: 'eg' };
+const SET_PHASE: Record<AlgSet, keyof typeof PHASE_COLORS> = { F2L: 'f2l', OLL: 'oll', PLL: 'pll', COLL: 'coll', ZBLL: 'zbll', WV: 'ls', VLS: 'ls', '2OLL': 'oll', PBL: 'pbl', CLL: 'cll', EG1: 'eg', EG2: 'eg' };
 
 /** Erkennungs-Trainer: Fall erkennen, aufdecken, bewerten. Schwache Fälle kommen öfter. */
 export class RecogMode implements TrainerMode {
@@ -23,7 +23,7 @@ export class RecogMode implements TrainerMode {
   private ctx: TrainerContext | null = null;
   /** Gewählte Kategorien je Puzzle (Mehrfachauswahl) */
   private sets: Record<Puzzle, AlgSet[]> = storage.get('recogSets', { 3: ['PLL'], 2: ['CLL'] } as Record<Puzzle, AlgSet[]>);
-  private pool: Pool = 'all';
+  private pool: Pool = 'srs';
   private current: AlgCase | null = null;
   private shownAt = 0;
   private revealed = false;
@@ -50,6 +50,7 @@ export class RecogMode implements TrainerMode {
     const poolSel = h(
       'select',
       { class: 'select', onchange: () => { this.pool = poolSel.value as Pool; this.next(); } },
+      h('option', { value: 'srs' }, '⏰ Fällig (Wiederholung)'),
       h('option', { value: 'all' }, 'Alle Fälle'),
       h('option', { value: 'fav' }, '★ Favoriten'),
       h('option', { value: 'learning' }, 'Am Lernen'),
@@ -77,8 +78,11 @@ export class RecogMode implements TrainerMode {
     if (e.code === 'Space') {
       e.preventDefault();
       if (!this.revealed) this.reveal();
-      else this.rate(true);
-    } else if (this.revealed && (e.key === 'x' || e.key === 'Backspace')) this.rate(false);
+      else this.rate(4);
+    } else if (this.revealed) {
+      const map: Record<string, Grade> = { x: 1, Backspace: 1, '1': 1, '2': 3, '3': 4, '4': 5 };
+      if (map[e.key]) this.rate(map[e.key]);
+    }
   }
 
   private get active(): AlgSet[] {
@@ -116,6 +120,7 @@ export class RecogMode implements TrainerMode {
       if (this.pool === 'fav') return progress.isFav(c.id);
       if (this.pool === 'learning') return progress.status(c.id) === 'learning';
       if (this.pool === 'notLearned') return progress.status(c.id) !== 'learned';
+      if (this.pool === 'srs') return progress.isDue(c.id);
       return true;
     });
     return filtered.length ? filtered : all;
@@ -128,6 +133,11 @@ export class RecogMode implements TrainerMode {
       if (c) return c;
     }
     const list = this.candidates().filter((c) => c !== this.current || this.candidates().length === 1);
+    if (this.pool === 'srs') {
+      // Am längsten überfällige zuerst; neue Fälle (nie geplant) zufällig dazwischen
+      const sorted = list.slice().sort((a, b) => progress.dueAt(a.id) - progress.dueAt(b.id));
+      return sorted[Math.floor(Math.random() * Math.min(3, sorted.length))];
+    }
     const weights = list.map((c) => {
       const p = progress.get(c.id);
       return Math.max(0.3, 1 + (p.misses ?? 0) * 2 - (p.hits ?? 0) * 0.3);
@@ -160,7 +170,7 @@ export class RecogMode implements TrainerMode {
     const color = PHASE_COLORS[SET_PHASE[c.set]];
     view.setPhaseColor(color);
     view.arrowColor = color;
-    view.resetCamera(c.set === 'F2L' || (two && c.set !== '2OLL') ? 'default' : 'top');
+    view.resetCamera(['F2L', 'WV', 'VLS'].includes(c.set) || (two && c.set !== '2OLL') ? 'default' : 'top');
     this.shownAt = performance.now();
     view.onFrame = () => {
       if (!this.revealed) this.timerEl.textContent = ((performance.now() - this.shownAt) / 1000).toFixed(2);
@@ -188,15 +198,20 @@ export class RecogMode implements TrainerMode {
     clear(ctx.actions);
     ctx.actions.append(
       h('div', { class: 'trainer-actions' },
-        h('button', { class: 'btn bad big', onclick: () => this.rate(false) }, '✗ Nicht gewusst'),
-        h('button', { class: 'btn good big', onclick: () => this.rate(true) }, '✓ Gewusst'),
+        h('button', { class: 'btn bad', title: 'Taste 1 oder X', onclick: () => this.rate(1) }, 'Nochmal'),
+        h('button', { class: 'btn', title: 'Taste 2', onclick: () => this.rate(3) }, 'Schwer'),
+        h('button', { class: 'btn good', title: 'Taste 3 oder Leertaste', onclick: () => this.rate(4) }, 'Gut'),
+        h('button', { class: 'btn', title: 'Taste 4', onclick: () => this.rate(5) }, 'Leicht'),
       ),
     );
   }
 
-  private rate(known: boolean) {
+  /** Bewertung: speichert Statistik und plant die nächste Wiederholung (Spaced Repetition). */
+  private rate(grade: Grade) {
     if (!this.current || !this.revealed) return;
+    const known = grade >= 3;
     progress.record(this.current.id, known, this.recogMs);
+    progress.grade(this.current.id, grade);
     this.session.n++;
     if (known) this.session.hits++;
     this.next();
@@ -217,6 +232,7 @@ export class RecogMode implements TrainerMode {
         h('div', { class: 'stat' }, h('b', null, String(this.session.n)), h('span', null, 'Fälle (Session)')),
         h('div', { class: 'stat' }, h('b', null, this.session.n ? `${Math.round((this.session.hits / this.session.n) * 100)}%` : '–'), h('span', null, 'gewusst')),
         h('div', { class: 'stat' }, h('b', null, `${rows.length}/${cases.length}`), h('span', null, 'geübt')),
+        h('div', { class: 'stat' }, h('b', null, String(cases.filter((c) => progress.isDue(c.id) && progress.get(c.id).due).length)), h('span', null, 'fällig')),
       ),
     );
     if (rows.length) {

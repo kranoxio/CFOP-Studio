@@ -1,11 +1,12 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import { MOVE_DEFS, type Move } from '../cube/cube';
+import { MOVE_DEFS, geometry, type Move } from '../cube/cube';
 import { CubeModel, FACE_COLORS, type Quality, type StickerLook } from './CubeModel';
 import { MovePlayer } from './MovePlayer';
 import { perf } from './perf';
 import { isLight } from '../ui/theme';
+import { settings } from '../settings';
 
 export interface CubeViewOptions {
   quality?: Quality;
@@ -72,6 +73,7 @@ export class CubeView {
   private particleVel: Float32Array | null = null;
   private particleAge = 0;
   private spin = 0;
+  private spinAngle = 0;
   private running = true;
   private visible = true;
   private dirty = true;
@@ -156,7 +158,11 @@ export class CubeView {
       c.autoRotateSpeed = 1.2;
       c.addEventListener('change', () => (this.dirty = true));
       (this as { controls: OrbitControls | null }).controls = c;
+      this.setupSwipe();
     }
+    this.setupTilt();
+    this.setTilt(settings.tilt);
+    document.addEventListener('tilt-change', () => this.setTilt(settings.tilt));
 
     if (opts.intro) this.startIntro();
 
@@ -170,6 +176,108 @@ export class CubeView {
       this.dirty = true;
     });
     this.renderer.setAnimationLoop(() => this.tick());
+  }
+
+  // ------------------------------------------------------------ Wischgesten
+
+  /** Wenn gesetzt, erzeugen Wischgesten auf Stickern Züge (sonst nur Kamera drehen) */
+  onSwipe: ((m: Move) => void) | null = null;
+  private raycaster = new THREE.Raycaster();
+
+  private setupSwipe() {
+    const el = this.renderer.domElement;
+    let start: { x: number; y: number; facelet: number; id: number } | null = null;
+    const ndc = (e: PointerEvent) => {
+      const r = el.getBoundingClientRect();
+      return new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+    };
+    // Capture-Phase am Container: kommt vor den OrbitControls und kann sie für diese Geste abschalten
+    this.container.addEventListener(
+      'pointerdown',
+      (e) => {
+        if (!this.onSwipe || e.target !== el || this.player.animating) return;
+        this.raycaster.setFromCamera(ndc(e), this.camera);
+        const f = this.model.pickFacelet(this.raycaster);
+        if (f === null) return;
+        start = { x: e.clientX, y: e.clientY, facelet: f, id: e.pointerId };
+        if (this.controls) this.controls.enabled = false;
+      },
+      { capture: true },
+    );
+    window.addEventListener('pointermove', (e) => {
+      if (!start || e.pointerId !== start.id) return;
+      const dx = e.clientX - start.x;
+      const dy = e.clientY - start.y;
+      if (Math.hypot(dx, dy) < 14) return;
+      const move = this.moveFromDrag(start.facelet, dx, dy);
+      // Für Tests nachvollziehbar: zuletzt getroffener Sticker
+      el.dataset.lastSwipe = String(start.facelet);
+      start = null;
+      if (move) this.onSwipe?.(move);
+    });
+    const end = () => {
+      start = null;
+      if (this.controls) this.controls.enabled = true;
+    };
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+  }
+
+  /**
+   * Bestimmt den Zug aus Sticker + Wischrichtung: Von den beiden Achsen senkrecht zur Fläche
+   * wird jene gewählt, deren Drehbewegung am Sticker am besten zur Wischrichtung passt.
+   */
+  private moveFromDrag(facelet: number, dx: number, dy: number): Move | null {
+    const { p, n } = geometry(facelet);
+    const pos = new THREE.Vector3(...p);
+    const toScreen = (v: THREE.Vector3) => {
+      const w = this.model.worldOf(v).project(this.camera);
+      return new THREE.Vector2(w.x, -w.y);
+    };
+    const drag = new THREE.Vector2(dx, dy).normalize();
+    let best: { axis: number; sign: number; score: number } | null = null;
+    for (let axis = 0; axis < 3; axis++) {
+      if (n[axis] !== 0) continue;
+      const a = new THREE.Vector3(axis === 0 ? 1 : 0, axis === 1 ? 1 : 0, axis === 2 ? 1 : 0);
+      // Bewegungsrichtung des Stickers bei positiver Drehung um diese Achse
+      const tangent = new THREE.Vector3().crossVectors(a, pos);
+      const screenT = toScreen(pos.clone().addScaledVector(tangent, 0.15)).sub(toScreen(pos)).normalize();
+      const score = screenT.dot(drag);
+      if (!best || Math.abs(score) > Math.abs(best.score)) best = { axis, sign: Math.sign(score), score };
+    }
+    if (!best || Math.abs(best.score) < 0.3) return null;
+    const layer = p[best.axis];
+    const base = Object.keys(MOVE_DEFS).find((k) => {
+      const d = MOVE_DEFS[k];
+      return d.axis === best!.axis && d.layers.length === 1 && d.layers[0] === layer;
+    });
+    if (!base) return null;
+    const amount = best.sign === MOVE_DEFS[base].dir ? 1 : 3;
+    return { base, amount };
+  }
+
+  // ------------------------------------------------------------ Neigung
+
+  /** Kamera folgt der Neigung des Geräts (sanft, um die Ausgangshaltung) */
+  private tilt = { on: false, beta0: NaN, gamma0: NaN, x: 0, y: 0 };
+
+  private setupTilt() {
+    window.addEventListener('deviceorientation', (e) => {
+      if (!this.tilt.on || e.beta === null || e.gamma === null) return;
+      if (isNaN(this.tilt.beta0)) {
+        this.tilt.beta0 = e.beta;
+        this.tilt.gamma0 = e.gamma;
+      }
+      const clamp = (v: number) => Math.max(-35, Math.min(35, v));
+      this.tilt.x = (clamp(e.beta - this.tilt.beta0) * Math.PI) / 180;
+      this.tilt.y = (clamp(e.gamma - this.tilt.gamma0) * Math.PI) / 180;
+      this.dirty = true;
+    });
+  }
+
+  setTilt(on: boolean) {
+    this.tilt = { on, beta0: NaN, gamma0: NaN, x: 0, y: 0 };
+    this.dirty = true;
   }
 
   /** Hängt die Ansicht in einen anderen Container (z.B. ein neu geöffnetes Modal). */
@@ -370,8 +478,15 @@ export class CubeView {
 
     if (this.spin > 0) {
       this.spin = Math.max(0, this.spin - dt * 0.7);
-      this.model.root.rotation.y += dt * 9 * this.spin * this.spin;
-      if (this.spin === 0) this.model.root.rotation.y = 0;
+      this.spinAngle += dt * 9 * this.spin * this.spin;
+      if (this.spin === 0) this.spinAngle = 0;
+      needs = true;
+    }
+    // Würfel folgt der Geräteneigung (Kamera bleibt), plus Drehung beim Feiern
+    const rx = this.tilt.on ? this.tilt.x * 0.6 : 0;
+    const ry = (this.tilt.on ? this.tilt.y * 0.8 : 0) + this.spinAngle;
+    if (this.model.root.rotation.x !== rx || this.model.root.rotation.y !== ry) {
+      this.model.root.rotation.set(rx, ry, 0);
       needs = true;
     }
 

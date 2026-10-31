@@ -7,16 +7,19 @@ import {
   crossSolved,
   isSolved,
   ollSolved,
+  edgesOriented,
+  llCornersSolved,
   slotSolved,
   type SlotInfo,
   type SlotName,
 } from '../cube/analysis';
 import { conjugateAlg, formatAlg, htm, parseAlg, rotationToHome, simplify } from '../cube/notation';
-import { F2L_CASES, OLL_CASES, PLL_CASES, type AlgCase } from '../algs/data';
+import { F2L_CASES, OLL_CASES, PLL_CASES, SET_LABEL, type AlgCase, type AlgSet } from '../algs/data';
+import { ADVANCED_CASES } from '../algs/advanced';
 import { normalizeAlg, preferredAlg, rotationFree, styleAlgs } from '../algs/registry';
 import { FWD, MOVE_FACE, SEARCH_MOVES, crossIndex, getCrossTable, getPairTable, pairIndex } from './tables';
 
-export type Phase = 'inspection' | 'cross' | 'f2l' | 'oll' | 'pll' | 'face' | 'layer' | 'pbl' | 'cll' | 'eg';
+export type Phase = 'inspection' | 'cross' | 'f2l' | 'ls' | 'oll' | 'coll' | 'zbll' | 'pll' | 'face' | 'layer' | 'pbl' | 'cll' | 'eg';
 
 export interface SolveStep {
   phase: Phase;
@@ -40,13 +43,22 @@ export interface Solution {
   moveCount: number;
 }
 
+export interface AdvancedSets {
+  wv?: boolean;
+  vls?: boolean;
+  coll?: boolean;
+  zbll?: boolean;
+}
+
 export interface SolveOptions {
   /** 'alg': F2L über die 41 Fälle (wie ein Mensch), 'optimal': kürzeste Lösung pro Paar */
   f2lMode: 'alg' | 'optimal';
+  /** Zusätzliche Sets für letztes Paar und letzte Ebene */
+  adv?: AdvancedSets;
 }
 
 const AUF: Move[][] = [[], [{ base: 'U', amount: 1 }], [{ base: 'U', amount: 2 }], [{ base: 'U', amount: 3 }]];
-const SLOT_ROTATION: Record<SlotName, Move[]> = {
+export const SLOT_ROTATION: Record<SlotName, Move[]> = {
   FR: [],
   FL: parseAlg("y'"),
   BL: parseAlg('y2'),
@@ -232,6 +244,30 @@ export function solveCFOP(start: State, opts: SolveOptions = { f2lMode: 'alg' })
     const open = SLOTS.filter((sl) => !slotSolved(s, sl));
     if (!open.length) break;
 
+    // Letztes Paar mit WV/VLS: wie ein Mensch das Paar vorbereiten und statt des letzten
+    // Einsetz-Triggers (z.B. R U R') den WV/VLS-Alg nutzen, der gleichzeitig orientiert
+    const lsSets: AlgSet[] = [...(opts.adv?.wv ? (['WV'] as const) : []), ...(opts.adv?.vls ? (['VLS'] as const) : [])];
+    if (open.length === 1 && lsSets.length) {
+      const ls = bestLastSlot(s, solved, open[0], lsSets);
+      if (ls) {
+        steps.push({
+          phase: 'ls',
+          title: `F2L ${pairNo} · ${SET_LABEL[ls.caseRef.set]}`,
+          subtitle: `${SET_LABEL[ls.caseRef.set]} ${ls.caseRef.key}${ls.caseRef.name ? ` · ${ls.caseRef.name}` : ''} · ${open[0].label}`,
+          caseId: ls.caseRef.id,
+          moves: ls.moves,
+          aufCount: ls.prep,
+          postAufCount: 0,
+          method: 'alg',
+          slot: open[0].name,
+          note: ls.prep ? `Paar vorbereiten (${formatAlg(ls.moves.slice(0, ls.prep))}), dann ${SET_LABEL[ls.caseRef.set]} statt Einsetzen` : `Einsetzen und letzte Ebene orientieren · ${ls.caseRef.group}`,
+          focus: [...focusForSlot(open[0]), ...LL_FACELETS],
+        });
+        s = applyMoves(s, ls.moves);
+        break;
+      }
+    }
+
     const lookups = lookupF2L(s, solved, open);
     let best: F2LCandidate | null = null;
     for (const c of lookups) if (!best || c.cost < best.cost) best = c;
@@ -267,9 +303,25 @@ export function solveCFOP(start: State, opts: SolveOptions = { f2lMode: 'alg' })
     pairNo++;
   }
 
+  // ZBLL: letzte Ebene in einem Schritt (Kanten orientiert)
+  if (opts.adv?.zbll && !ollSolved(s) && edgesOriented(s)) {
+    const z = lookupLL(s, 'ZBLL', isSolved);
+    if (z) {
+      steps.push(llStep('zbll', 'ZBLL', z));
+      s = z.end;
+      if (!isSolved(s)) throw new Error('ZBLL unvollständig');
+      return { steps, moveCount: steps.reduce((n, st) => n + htm(st.moves), 0) };
+    }
+  }
+
   // OLL
-  if (ollSolved(s)) {
-    steps.push({ phase: 'oll', title: 'OLL', subtitle: 'OLL Skip!', moves: [], aufCount: 0, postAufCount: 0, method: 'skip', focus: LL_FACELETS });
+  const coll = opts.adv?.coll && !ollSolved(s) && edgesOriented(s) ? lookupLL(s, 'COLL', (e) => ollSolved(e) && AUF.some((a) => llCornersSolved(applyMoves(e, a))), false) : null;
+  if (coll) {
+    steps.push(llStep('coll', 'COLL', coll));
+    s = coll.end;
+  } else if (ollSolved(s)) {
+    const viaLs = steps[steps.length - 1]?.phase === 'ls';
+    steps.push({ phase: 'oll', title: 'OLL', subtitle: viaLs ? 'Schon orientiert (Last Slot)' : 'OLL Skip!', moves: [], aufCount: 0, postAufCount: 0, method: 'skip', focus: LL_FACELETS });
   } else {
     const r = recognizeOLL(s);
     if (!r) throw new Error('OLL nicht erkannt');
@@ -321,6 +373,94 @@ export function solveCFOP(start: State, opts: SolveOptions = { f2lMode: 'alg' })
   }
   if (!isSolved(s)) throw new Error('Lösung unvollständig');
   return { steps, moveCount: steps.reduce((n, st) => n + htm(st.moves), 0) };
+}
+
+// ---------------------------------------------------------------- Fortgeschrittene Sets
+
+interface LLMatch {
+  caseRef: AlgCase;
+  auf: Move[];
+  alg: Move[];
+  post: Move[];
+  end: State;
+}
+
+/** Alg-Suche in einem Set der letzten Ebene: AUF davor, Alg, optional AUF danach. */
+function lookupLL(s: State, set: AlgSet, goal: (e: State) => boolean, withPost = true): LLMatch | null {
+  const cases = ADVANCED_CASES.filter((c) => c.set === set);
+  for (let a = 0; a < 4; a++) {
+    const afterAuf = applyMoves(s, AUF[a]);
+    for (const c of cases) {
+      // Ein Fall wird eindeutig durch seinen bevorzugten Alg erkannt
+      const alg = cachedNormalized(preferredAlg(c));
+      const end = applyMoves(afterAuf, alg);
+      for (const post of withPost ? AUF : [[]]) {
+        const fin = post.length ? applyMoves(end, post) : end;
+        if (goal(fin)) return { caseRef: c, auf: AUF[a], alg, post, end: fin };
+      }
+    }
+  }
+  return null;
+}
+
+const normCache = new Map<string, Move[]>();
+function cachedNormalized(text: string): Move[] {
+  let m = normCache.get(text);
+  if (!m) normCache.set(text, (m = normalizeAlg(text)));
+  return m;
+}
+
+function llStep(phase: Phase, title: string, m: LLMatch): SolveStep {
+  return {
+    phase,
+    title,
+    subtitle: `${SET_LABEL[m.caseRef.set]} ${m.caseRef.key}${m.caseRef.name ? ` · ${m.caseRef.name}` : ''}`,
+    caseId: m.caseRef.id,
+    moves: [...m.auf, ...m.alg, ...m.post],
+    aufCount: m.auf.length,
+    postAufCount: m.post.length,
+    method: 'alg',
+    note: m.caseRef.group,
+    focus: LL_FACELETS,
+  };
+}
+
+/**
+ * Bester WV/VLS-Einsatz für den letzten Slot: direkt oder nach einer F2L-Vorbereitung,
+ * deren letzter Einsetz-Trigger (3 Züge) durch den WV/VLS-Alg ersetzt wird.
+ * prep = Anzahl Vorbereitungszüge (für die Anzeige).
+ */
+function bestLastSlot(s: State, keep: SlotInfo[], slot: SlotInfo, sets: AlgSet[]): { caseRef: AlgCase; moves: Move[]; prep: number } | null {
+  let best: { caseRef: AlgCase; moves: Move[]; prep: number } | null = null;
+  const consider = (prefix: Move[]) => {
+    const st = applyMoves(s, prefix);
+    if (slotSolved(st, slot)) return;
+    const ls = lookupLastSlot(st, keep, slot, sets);
+    if (!ls) return;
+    const moves = simplify([...prefix, ...ls.moves]);
+    if (!best || htm(moves) < htm(best.moves)) best = { caseRef: ls.caseRef, moves, prep: prefix.length };
+  };
+  consider([]);
+  for (const c of lookupF2L(s, keep, [slot])) if (c.moves.length > 3) consider(c.moves.slice(0, -3));
+  return best;
+}
+
+/** WV/VLS für den letzten Slot (Algs gelten für vorne rechts und werden umbenannt). */
+function lookupLastSlot(s: State, keep: SlotInfo[], slot: SlotInfo, sets: AlgSet[]): { caseRef: AlgCase; moves: Move[]; aufCount: number } | null {
+  const cases = ADVANCED_CASES.filter((c) => sets.includes(c.set));
+  let best: { caseRef: AlgCase; moves: Move[]; aufCount: number } | null = null;
+  for (let a = 0; a < 4; a++) {
+    const afterAuf = applyMoves(s, AUF[a]);
+    for (const c of cases) {
+      const alg = cachedRotationFree(preferredAlg(c), slot.name);
+      const end = applyMoves(afterAuf, alg);
+      if (!ollSolved(end) || !keep.every((k) => slotSolved(end, k))) continue;
+      const moves = simplify([...AUF[a], ...alg]);
+      if (!best || htm(moves) < htm(best.moves)) best = { caseRef: c, moves, aufCount: moves.length === AUF[a].length + alg.length ? AUF[a].length : 0 };
+    }
+    if (best) return best;
+  }
+  return best;
 }
 
 // ---------------------------------------------------------------- Erkennung & Analyse

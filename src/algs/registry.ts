@@ -1,5 +1,5 @@
 import { applyMoves, solvedState, type Move, type State } from '../cube/cube';
-import { f2lSolved, ollSolved, isSolved, SLOTS, slotSolved, crossSolved } from '../cube/analysis';
+import { f2lSolved, ollSolved, isSolved, SLOTS, slotSolved, crossSolved, llCornersSolved } from '../cube/analysis';
 import { formatAlg, invertAlg, netRotationFix, parseAlg, removeRotations, tryParseAlg } from '../cube/notation';
 import { ALL_CASES, CASE_BY_ID, type AlgCase } from './data';
 import { bottomFace, cornersHome, normalizeAlg2, toCornerMoves, topOriented } from '../cube/cube2';
@@ -125,16 +125,18 @@ export function validateAlg(c: AlgCase, text: string): ValidationResult {
       const good =
         c.set === 'F2L'
           ? crossSolved(end) && SLOTS.every((s) => slotSolved(end, s))
-          : c.set === 'OLL'
+          : c.set === 'OLL' || c.set === 'WV' || c.set === 'VLS'
             ? ollSolved(end)
-            : isSolved(end);
+            : c.set === 'COLL'
+              ? ollSolved(end) && llCornersSolved(end)
+              : isSolved(end);
       if (good) {
         const aufText = pre.length ? ` (mit ${formatAlg(pre)} davor)` : '';
         return { ok: true, message: `Alg löst den Fall${aufText}` };
       }
     }
   }
-  if (c.set !== 'F2L' && !f2lSolved(applyMoves(start, fixed))) return { ok: false, message: 'Alg zerstört F2L' };
+  if (!['F2L', 'WV', 'VLS'].includes(c.set) && !f2lSolved(applyMoves(start, fixed))) return { ok: false, message: 'Alg zerstört F2L' };
   return { ok: false, message: 'Alg löst diesen Fall nicht' };
 }
 

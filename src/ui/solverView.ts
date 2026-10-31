@@ -65,11 +65,20 @@ export class SolverView {
   private realtimeBtn!: HTMLButtonElement;
 
   private scramble: Move[] = [];
+  /** Freies Drehen per Wischen */
+  private swipeOn = false;
+  private sandbox = false;
+  private swipeBtn = h('button', { class: 'chip-btn small', title: 'Würfel per Wischen auf den Stickern drehen', onclick: () => this.toggleSwipe() }, '🖐 Drehen');
+  private sandboxBar = h('div', { class: 'sandbox-bar' });
+  /** Letzter echter Scramble (für „Zurück zur Lösung“) */
+  private lastScramble: Move[] = [];
   private liveBar!: HTMLElement;
   private live = false;
   private liveOff: Move[] = [];
   private solTitle = h('h3', null, 'Lösung');
   private modeSel!: HTMLSelectElement;
+  /** Zusatz-Sets (3x3): WV, VLS, COLL, ZBLL – einzeln zuschaltbar */
+  private advRow = h('div', { class: 'adv-row' });
   private solution: Solution | null = null;
   private segments: Segment[] = [];
   private scrambleLen = 0;
@@ -89,8 +98,9 @@ export class SolverView {
       ...(['default', 'top', 'back', 'bottom'] as const).map((v) =>
         h('button', { class: 'chip-btn small', title: 'Kameraansicht', onclick: () => this.view?.resetCamera(v) }, { default: '3D', top: 'Oben', back: 'Hinten', bottom: 'Unten' }[v]),
       ),
+      this.swipeBtn,
     );
-    this.stageSlot.append(hudTop, hudBottom, camBtns);
+    this.stageSlot.append(hudTop, hudBottom, camBtns, this.sandboxBar);
 
     const controls = this.buildControls();
     this.panel = this.buildPanel();
@@ -195,6 +205,7 @@ export class SolverView {
       },
     }) as HTMLSelectElement);
     this.fillModeOptions();
+    this.renderAdvRow();
 
     return h(
       'aside',
@@ -216,6 +227,7 @@ export class SolverView {
         'div',
         { class: 'card glass' },
         h('div', { class: 'card-head' }, this.solTitle, modeSel),
+        this.advRow,
         this.statsEl,
         this.stepsEl,
       ),
@@ -249,9 +261,36 @@ export class SolverView {
     );
   }
 
+  private renderAdvRow() {
+    clear(this.advRow);
+    if (settings.puzzle !== 3) return;
+    const items: [keyof typeof settings.adv, string, string][] = [
+      ['wv', 'WV', 'Winter Variation: letztes Paar einsetzen und Ecken orientieren'],
+      ['vls', 'VLS', 'Valk Last Slot: letztes Paar einsetzen und letzte Ebene orientieren'],
+      ['coll', 'COLL', 'Ecken lösen, wenn die Kanten orientiert sind (danach nur EPLL)'],
+      ['zbll', 'ZBLL', 'Letzte Ebene in einem Schritt, wenn die Kanten orientiert sind'],
+    ];
+    this.advRow.append(h('span', { class: 'muted small' }, 'Zusatz-Sets:'));
+    for (const [key, label, title] of items) {
+      this.advRow.append(
+        h('button', {
+          class: `chip-btn small ${settings.adv[key] ? 'active' : ''}`,
+          title,
+          onclick: () => {
+            settings.adv = { ...settings.adv, [key]: !settings.adv[key] };
+            saveSettings();
+            this.renderAdvRow();
+            if (!this.source.steps && this.solution) this.solve(this.scramble, false, { base: this.source.base });
+          },
+        }, label),
+      );
+    }
+  }
+
   /** Wechsel zwischen 3x3 und 2x2 */
   private onPuzzleChange() {
     this.fillModeOptions();
+    this.renderAdvRow();
     this.updateLiveBar();
     if (!this.view) return;
     this.view.setPuzzle(settings.puzzle);
@@ -262,7 +301,7 @@ export class SolverView {
   private runSolver(state: State) {
     return settings.puzzle === 2
       ? callSolver('solve2', state, settings.method2).then((r) => ({ solution: r.result, ms: r.ms }))
-      : solveAsync(state, { f2lMode: settings.f2lMode });
+      : solveAsync(state, { f2lMode: settings.f2lMode, adv: settings.adv });
   }
 
   // ------------------------------------------------------------ Lebenszyklus
@@ -334,7 +373,10 @@ export class SolverView {
   private async solve(scramble: Move[], animateScramble: boolean, opts: SolveSource = {}) {
     if (!this.view) return;
     const token = ++this.solveToken;
+    this.sandbox = false;
+    clear(this.sandboxBar);
     this.scramble = scramble;
+    if (scramble.length) this.lastScramble = scramble;
     this.solution = null;
     this.source = opts;
     this.solTitle.textContent = opts.title ?? 'Lösung';
@@ -614,8 +656,44 @@ export class SolverView {
     return this.segments.length; // fertig
   }
 
+  // ------------------------------------------------------------ Freies Drehen
+
+  private toggleSwipe() {
+    this.swipeOn = !this.swipeOn;
+    this.swipeBtn.classList.toggle('active', this.swipeOn);
+    if (this.view) this.view.onSwipe = this.swipeOn ? (m) => this.userMove(m) : null;
+    if (this.swipeOn) toast('Wische über die Sticker, um Schichten zu drehen – neben dem Würfel dreht sich die Kamera');
+  }
+
+  /** Eigener Zug per Wischen: wechselt in den freien Modus ab dem gerade gezeigten Zustand */
+  private userMove(m: Move) {
+    const p = this.view!.player;
+    if (!this.sandbox) {
+      this.sandbox = true;
+      this.solveToken++;
+      p.load(p.state, []);
+      this.segments = [];
+      this.chipEls = [];
+      this.view!.look = undefined;
+      this.view!.setPhaseColor(PHASE_COLORS.scramble);
+      this.hud.phase.textContent = 'Frei';
+      this.hud.title.textContent = 'Freies Drehen';
+      this.hud.sub.textContent = '';
+      clear(this.hud.alg);
+      this.sandboxBar.replaceChildren(
+        h('button', { class: 'chip-btn', onclick: () => this.solve([], false, { base: this.view!.player.state, title: 'Lösung deines Zustands' }) }, '🧊 Diesen Zustand lösen'),
+        h('button', { class: 'chip-btn', onclick: () => this.solve(this.lastScramble, false) }, '↩ Zurück zur Lösung'),
+      );
+    }
+    p.extend([m]);
+    p.tps = 10;
+    p.play();
+    this.hud.alg.append(h('span', { class: 'hm done' }, moveToString(m)));
+    this.hud.counter.textContent = `${p.moves.length} Züge`;
+  }
+
   private onIndex(index: number) {
-    if (!this.view) return;
+    if (!this.view || this.sandbox) return;
     const p = this.view.player;
     const prevIndex = this.lastIndex;
     this.lastIndex = index;
@@ -718,7 +796,7 @@ export class SolverView {
 
   private renderScramble() {
     clear(this.scrambleEl);
-    this.scrambleEl.append(formatAlg(this.scramble));
+    this.scrambleEl.append(this.scramble.length ? formatAlg(this.scramble) : h('span', { class: 'muted' }, 'Eigener Zustand (kein Scramble)'));
   }
 
   private renderStats(solveMs: number | null) {

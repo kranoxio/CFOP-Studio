@@ -25,6 +25,10 @@ export interface Settings {
   puzzle: 2 | 3;
   /** Methode für den 2x2 (bestimmt die verwendeten Alg-Kategorien) */
   method2: 'ortega' | 'cll' | 'eg';
+  /** Zusätzliche 3x3-Sets im Solver */
+  adv: { wv?: boolean; vls?: boolean; coll?: boolean; zbll?: boolean };
+  /** Würfel folgt der Neigung des Geräts */
+  tilt: boolean;
 }
 
 const DEFAULTS: Settings = {
@@ -48,6 +52,8 @@ const DEFAULTS: Settings = {
   crossInspection: true,
   puzzle: 3,
   method2: 'ortega',
+  adv: {},
+  tilt: false,
 };
 
 export const settings: Settings = { ...DEFAULTS, ...storage.get<Partial<Settings>>('settings', {}) };

@@ -88,7 +88,7 @@ export class CrossMode implements TrainerMode {
         'div',
         { class: 'card glass' },
         h('div', { class: 'card-head' }, h('h3', null, 'Kreuz-Trainer'), goalSeg),
-        h('p', { class: 'muted small' }, 'Plane das weisse Kreuz in der Inspektion und gib deine Lösung ein (Weiss unten, Grün vorne). Mit verbundenem Smartcube einfach am echten Würfel lösen.'),
+        h('p', { class: 'muted small' }, 'Plane das weisse Kreuz in der Inspektion und gib deine Lösung ein (Weiss unten, Grün vorne): per Tastenfeld, per Wischen am 3D-Würfel oder – mit Smartcube – direkt am echten Würfel.'),
         h('div', { class: 'toggles' },
           h('label', { class: 'toggle' }, inspToggle, h('span', { class: 'toggle-ui' }), '15 s Inspektion anzeigen'),
           h('label', { class: 'toggle' }, hlToggle, h('span', { class: 'toggle-ui' }), 'Kreuzsteine hervorheben (Hilfe)'),
@@ -98,6 +98,17 @@ export class CrossMode implements TrainerMode {
     );
     ctx.hudTop.append(this.timerEl);
     ctx.view.onFrame = () => this.tick();
+    // Eingabe auch per Wischen am 3D-Würfel (praktisch am Handy)
+    ctx.view.onSwipe = (m) => {
+      if (this.phase !== 'inspect') return;
+      this.input.push(m);
+      this.inputEl.value = formatAlg(this.input);
+      const p = ctx.view.player;
+      p.extend([m]);
+      p.tps = 10;
+      p.play();
+      if (this.goalReached(applyMoves(this.startState, this.input))) this.evaluate();
+    };
     this.offMove = smartCube.onMove((ev) => this.onSmartMove(ev));
     this.renderStats();
     this.next();
@@ -108,7 +119,10 @@ export class CrossMode implements TrainerMode {
     this.tracker = null;
     this.offMove?.();
     this.offMove = null;
-    if (this.ctx) this.ctx.view.onFrame = null;
+    if (this.ctx) {
+      this.ctx.view.onFrame = null;
+      this.ctx.view.onSwipe = null;
+    }
     this.ctx = null;
   }
 

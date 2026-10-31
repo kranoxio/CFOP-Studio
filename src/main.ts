@@ -12,8 +12,9 @@ import { smartCube } from './smartcube/smartcube';
 import { openSettings } from './ui/settingsPanel';
 import { applyAppearance } from './ui/theme';
 import { setPuzzle } from './ui/puzzle';
+import { startAutoSync } from './net/sync';
 
-type TabId = 'solver' | 'algs' | 'trainer' | 'timer';
+type TabId = 'solver' | 'algs' | 'trainer' | 'timer' | 'stats';
 interface View {
   el: HTMLElement;
   activate(): void;
@@ -27,6 +28,7 @@ const loaders: Record<Exclude<TabId, 'solver'>, () => Promise<View>> = {
   algs: () => import('./ui/algsView').then((m) => new m.AlgsView()),
   trainer: () => import('./ui/trainerView').then((m) => new m.TrainerView()),
   timer: () => import('./ui/timerView').then((m) => new m.TimerView()),
+  stats: () => import('./ui/statsView').then((m) => new m.StatsView()),
 };
 const views: Partial<Record<TabId, View>> = { solver };
 const loading = new Map<TabId, Promise<View>>();
@@ -51,6 +53,7 @@ const TABS: [TabId, string, string][] = [
   ['algs', '▦', 'Algorithmen'],
   ['trainer', '🎯', 'Trainer'],
   ['timer', '⏱', 'Timer'],
+  ['stats', '📈', 'Statistik'],
 ];
 
 let current: TabId | null = null;
@@ -127,6 +130,12 @@ document.addEventListener('train-case', async (e) => {
   view.train((e as CustomEvent<string>).detail);
   show('trainer');
 });
+document.addEventListener('open-trainer', () => show('trainer'));
+document.addEventListener('drill-case', async (e) => {
+  const view = (await getView('trainer')) as import('./ui/trainerView').TrainerView;
+  view.drill((e as CustomEvent<string>).detail);
+  show('trainer');
+});
 document.addEventListener('show-reconstruction', (e) => {
   show('solver');
   solver.loadReconstruction((e as CustomEvent<import('./ui/timerView').Solve>).detail);
@@ -137,6 +146,9 @@ document.addEventListener('show-scramble', (e) => {
 });
 
 applyAppearance();
+startAutoSync();
+// Einladungslink zu einem Battle-Raum öffnet direkt den Timer
+if (/[#&]battle=/.test(location.hash)) setTimeout(() => show('timer'), 0);
 warmupSolver();
 show('solver');
 

@@ -1,12 +1,14 @@
 import { applyMoves, type Move } from '../cube/cube';
-import { formatAlg } from '../cube/notation';
+import { formatAlg, parseAlg } from '../cube/notation';
 import { settings } from '../settings';
-import { scrambleFor } from './puzzle';
+import { scrambleFor, setPuzzle } from './puzzle';
+import { battlePanel } from './battlePanel';
+import { battle } from '../net/battle';
 import { storage } from '../util/storage';
 import { WCA_START, smartCube, type SmartMove } from '../smartcube/smartcube';
 import { ScrambleTracker } from '../smartcube/tracker';
 import { MILESTONE_LABEL, SplitTracker, type Milestone } from '../smartcube/splits';
-import { clear, fmtTime, h } from './dom';
+import { clear, fmtTime, h, toast } from './dom';
 import { netDiagram, netDiagram2 } from './caseDiagram';
 import { smartCubeCard } from './settingsPanel';
 
@@ -18,6 +20,8 @@ export interface Solve {
   /** Nur bei Smartcube-Solves: eigene Züge (WCA-Rahmen) und erreichte Phasen */
   moves?: string;
   splits?: Milestone[];
+  /** Zeitpunkt jedes Zuges in ms seit Start (für Pausen- und Erkennungsanalyse) */
+  times?: number[];
 }
 
 /** Eigene Session je Puzzle */
@@ -60,6 +64,7 @@ export class TimerView {
   private tracker: ScrambleTracker | null = null;
   private smartPhase: 'off' | 'scramble' | 'ready' | 'running' = 'off';
   private smartMoves: Move[] = [];
+  private smartTimes: number[] = [];
   private split: SplitTracker | null = null;
   private lastMoveAt = 0;
 
@@ -83,11 +88,16 @@ export class TimerView {
         { class: 'timer-layout' },
         h(
           'div',
-          { class: 'card glass' },
-          h('div', { class: 'card-head' }, h('h3', null, 'Scramble'), h('button', { class: 'btn', onclick: () => this.newScramble() }, '🎲 Neu')),
-          this.scrambleEl,
-          this.smartEl,
-          this.previewEl,
+          { class: 'timer-col' },
+          h(
+            'div',
+            { class: 'card glass' },
+            h('div', { class: 'card-head' }, h('h3', null, 'Scramble'), h('button', { class: 'btn', onclick: () => this.newScramble() }, '🎲 Neu')),
+            this.scrambleEl,
+            this.smartEl,
+            this.previewEl,
+          ),
+          battlePanel(),
         ),
         this.pad,
         h('div', { class: 'card glass' }, h('div', { class: 'card-head' }, this.sessionTitle, h('button', { class: 'link-btn small', onclick: () => this.clearSession() }, 'Session leeren')), this.statsEl, this.listEl),
@@ -106,6 +116,24 @@ export class TimerView {
       this.renderStats();
     });
     smartCube.onMove((ev) => this.onSmartMove(ev));
+    // Battle: Scramble des Raums übernehmen, sobald eine neue Runde beginnt
+    let lastRound = '';
+    battle.onChange((st) => {
+      if (!st) return;
+      const key = `${st.code}:${st.round}`;
+      if (key === lastRound || this.state === 'running' || this.smartPhase === 'running') return;
+      lastRound = key;
+      if (st.puzzle !== settings.puzzle) setPuzzle(st.puzzle);
+      this.scramble = parseAlg(st.scramble);
+      this.renderScramble();
+      if (smartCube.connected && settings.puzzle === 3) this.setupSmart();
+    });
+    document.addEventListener('synced', (e) => {
+      if ((e as CustomEvent<string[]>).detail.includes(solvesKey())) {
+        this.solves = storage.get(solvesKey(), []);
+        this.renderStats();
+      }
+    });
     this.renderScramble();
     this.renderStats();
     this.setupSmart();
@@ -180,6 +208,7 @@ export class TimerView {
     this.pad.className = 'timer-pad done';
     this.solves.unshift({ ms, scramble: formatAlg(this.scramble), at: Date.now() });
     this.save();
+    this.reportBattle(ms);
     this.newScramble();
   }
 
@@ -220,6 +249,7 @@ export class TimerView {
       this.smartPhase = 'running';
       this.tracker?.stop();
       this.smartMoves = [];
+      this.smartTimes = [];
       this.split = new SplitTracker();
       this.startAt = ev.time;
       this.pad.className = 'timer-pad running';
@@ -228,6 +258,7 @@ export class TimerView {
     }
     if (this.smartPhase !== 'running' || !this.split) return;
     this.smartMoves.push(ev.move);
+    this.smartTimes.push(Math.round(ev.time - this.startAt));
     this.lastMoveAt = ev.time;
     const before = this.split.milestones.length;
     this.split.update(smartCube.state, this.smartMoves.length - 1, ev.time - this.startAt);
@@ -245,10 +276,12 @@ export class TimerView {
       scramble: formatAlg(this.scramble),
       at: Date.now(),
       moves: formatAlg(this.smartMoves),
+      times: this.smartTimes,
       splits: this.split!.milestones,
     };
     this.solves.unshift(solve);
     this.save();
+    this.reportBattle(ms);
     this.renderSplits(solve.splits!, solve);
     this.smartPhase = 'scramble';
     this.newScramble();
@@ -289,7 +322,21 @@ export class TimerView {
     this.save();
   }
 
+  /** Im Battle-Raum: Zeit melden, sofern der Scramble der aktuellen Runde gelöst wurde */
+  private reportBattle(ms: number) {
+    const st = battle.state;
+    if (!st || formatAlg(parseAlg(st.scramble)) !== formatAlg(this.scramble)) return;
+    battle.submit(ms).catch((e) => toast(`Battle: ${e.message}`));
+  }
+
   private newScramble() {
+    // Im Battle-Raum gilt immer der Scramble des Raums, bis der Gastgeber weiterschaltet
+    if (battle.state) {
+      this.scramble = parseAlg(battle.state.scramble);
+      this.renderScramble();
+      if (smartCube.connected && settings.puzzle === 3 && this.smartPhase !== 'running') this.setupSmart();
+      return;
+    }
     this.scramble = scrambleFor();
     this.renderScramble();
     if (smartCube.connected && settings.puzzle === 3 && this.smartPhase !== 'running') this.setupSmart();

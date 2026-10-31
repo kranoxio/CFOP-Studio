@@ -1,7 +1,7 @@
 // CFOP Studio – Service Worker
 // index.html: zuerst Netz (damit Updates sofort ankommen), sonst Cache.
 // Gehashte Assets, Schriften, Icons: zuerst Cache (ändern sich nie).
-const CACHE = 'cfop-studio-v4';
+const CACHE = 'cfop-studio-v5';
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(['./', './manifest.webmanifest', './icon.svg'])));

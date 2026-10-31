@@ -4,6 +4,8 @@ import { perf } from '../render/perf';
 import { setAlgStyle } from '../algs/registry';
 import { applyAppearance } from './theme';
 import { setPuzzle } from './puzzle';
+import { serverAvailable } from '../net/api';
+import { newSyncCode, onSyncStatus, setSyncCode, startAutoSync, syncCode, syncNow, syncStatus } from '../net/sync';
 import { clear, h, modal, toast } from './dom';
 
 type Option<T> = [T, string];
@@ -83,6 +85,46 @@ export function smartCubeCard(): HTMLElement {
   return box;
 }
 
+/** Sync zwischen iPhone, iPad usw. über den NAS-Server – per gemeinsamem Code */
+function syncCard(): HTMLElement {
+  const box = h('div', { class: 'sync-box' });
+  const render = async () => {
+    const ok = await serverAvailable();
+    clear(box);
+    if (!ok) {
+      box.append(h('p', { class: 'muted small' }, 'Sync braucht den NAS-Server (Docker-Image ab dieser Version). Hier ist er nicht erreichbar.'));
+      return;
+    }
+    const code = syncCode();
+    const st = syncStatus();
+    const statusText =
+      st.state === 'syncing' ? 'Synchronisiere …' : st.state === 'error' ? `Fehler: ${st.message}` : st.last ? `Zuletzt: ${new Date(st.last).toLocaleTimeString('de-CH')}` : '';
+    if (code) {
+      box.append(
+        h('div', { class: 'cube-status on' }, h('span', { class: 'led' }), 'Sync aktiv · Code ', h('b', { class: 'mono' }, code)),
+        h('p', { class: 'muted small' }, 'Gib diesen Code auf deinen anderen Geräten ein. Fortschritt, eigene Algs, Wiederholungen und Zeiten werden automatisch abgeglichen.', statusText ? ` ${statusText}` : ''),
+        h('div', { class: 'btn-row' },
+          h('button', { class: 'btn', onclick: () => syncNow().then(render) }, '⟳ Jetzt abgleichen'),
+          h('button', { class: 'btn', onclick: () => navigator.clipboard?.writeText(code).then(() => toast('Code kopiert'), () => toast(code)) }, 'Code kopieren'),
+          h('button', { class: 'btn', onclick: () => { setSyncCode(null); render(); } }, 'Sync beenden'),
+        ),
+      );
+    } else {
+      const input = h('input', { class: 'input mono', placeholder: 'Code von einem anderen Gerät', autocapitalize: 'off' }) as HTMLInputElement;
+      box.append(
+        h('p', { class: 'muted small' }, 'Erzeuge auf einem Gerät einen Code und gib ihn auf den anderen ein.'),
+        h('div', { class: 'btn-row' },
+          h('button', { class: 'btn primary', onclick: () => { setSyncCode(newSyncCode()); startAutoSync(); render(); } }, 'Neuen Sync-Code erzeugen'),
+        ),
+        h('div', { class: 'inline-form' }, input, h('button', { class: 'btn', onclick: () => { const c = input.value.trim(); if (c.length >= 6) { setSyncCode(c); startAutoSync(); render(); } else toast('Code zu kurz'); } }, 'Verbinden')),
+      );
+    }
+  };
+  void render();
+  onSyncStatus(() => box.isConnected && void render());
+  return box;
+}
+
 export function openSettings() {
   const perfToggle = h('input', {
     type: 'checkbox',
@@ -110,6 +152,30 @@ export function openSettings() {
         saveSettings();
         applyAppearance();
       })),
+      row('Würfel per Neigung', 'Der 3D-Würfel folgt sanft der Neigung von iPhone/iPad', (() => {
+        const t = h('input', {
+          type: 'checkbox',
+          checked: settings.tilt,
+          onchange: async () => {
+            if (t.checked) {
+              // iOS fragt beim ersten Mal nach der Erlaubnis für Bewegungssensoren
+              const DOE = (globalThis as { DeviceOrientationEvent?: { requestPermission?: () => Promise<string> } }).DeviceOrientationEvent;
+              if (DOE?.requestPermission) {
+                const res = await DOE.requestPermission().catch(() => 'denied');
+                if (res !== 'granted') {
+                  t.checked = false;
+                  toast('Ohne Erlaubnis für Bewegung & Ausrichtung geht das leider nicht');
+                  return;
+                }
+              }
+            }
+            settings.tilt = t.checked;
+            saveSettings();
+            document.dispatchEvent(new CustomEvent('tilt-change'));
+          },
+        }) as HTMLInputElement;
+        return h('label', { class: 'toggle' }, t, h('span', { class: 'toggle-ui' }));
+      })()),
       h('h4', null, 'Puzzle'),
       row('Würfel', '3×3 (CFOP) oder 2×2', segmented(String(settings.puzzle) as '3' | '2', [['3', '3×3'], ['2', '2×2']], (v) => setPuzzle(v === '2' ? 2 : 3))),
       row('2×2-Methode', 'Bestimmt, welche Alg-Kategorien der 2×2-Solver nutzt: Ortega = OLL + PBL, CLL = erste Ebene + CLL, EG = erste Seite + CLL/EG-1/EG-2', segmented(settings.method2, [['ortega', 'Ortega'], ['cll', 'CLL'], ['eg', 'EG']], (v) => {
@@ -126,6 +192,8 @@ export function openSettings() {
       })),
       h('h4', null, 'Smartcube'),
       smartCubeCard(),
+      h('h4', null, 'Geräte-Sync (NAS)'),
+      syncCard(),
       h('h4', null, 'Diagnose'),
       row('Leistungsanzeige', 'Bilder pro Sekunde, längstes Bild, Draw Calls, Auflösung', h('label', { class: 'toggle' }, perfToggle, h('span', { class: 'toggle-ui' }))),
     ),

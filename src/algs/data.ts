@@ -1,6 +1,7 @@
 import { CASES_2X2 } from './data2';
+import { ADVANCED_CASES } from './advanced';
 
-export type AlgSet = 'F2L' | 'OLL' | 'PLL' | '2OLL' | 'PBL' | 'CLL' | 'EG1' | 'EG2';
+export type AlgSet = 'F2L' | 'OLL' | 'PLL' | 'COLL' | 'ZBLL' | 'WV' | 'VLS' | '2OLL' | 'PBL' | 'CLL' | 'EG1' | 'EG2';
 export type Puzzle = 2 | 3;
 
 export interface AlgCase {
@@ -177,10 +178,10 @@ export const PLL_CASES: AlgCase[] = [
   pll('Gd', 'G-Perms', ["R U R' U' D R2 U' R U' R' U R' U R2 D'"], 'Gd-Perm', '1/18'),
 ];
 
-export const ALL_CASES: AlgCase[] = [...F2L_CASES, ...OLL_CASES, ...PLL_CASES, ...CASES_2X2];
+export const ALL_CASES: AlgCase[] = [...F2L_CASES, ...OLL_CASES, ...PLL_CASES, ...ADVANCED_CASES, ...CASES_2X2];
 
 export const SETS_BY_PUZZLE: Record<Puzzle, AlgSet[]> = {
-  3: ['F2L', 'OLL', 'PLL'],
+  3: ['F2L', 'OLL', 'PLL', 'COLL', 'WV', 'VLS', 'ZBLL'],
   2: ['2OLL', 'PBL', 'CLL', 'EG1', 'EG2'],
 };
 
@@ -188,6 +189,10 @@ export const SET_LABEL: Record<AlgSet, string> = {
   F2L: 'F2L',
   OLL: 'OLL',
   PLL: 'PLL',
+  COLL: 'COLL',
+  ZBLL: 'ZBLL',
+  WV: 'WV',
+  VLS: 'VLS',
   '2OLL': 'OLL',
   PBL: 'PBL',
   CLL: 'CLL',

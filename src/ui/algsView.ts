@@ -1,7 +1,10 @@
-import { moveToString, type Move } from '../cube/cube';
+import { applyMoves, moveToString, solvedState, type Move } from '../cube/cube';
+import { conjugateAlg, formatAlg, invertAlg, parseAlg, simplify } from '../cube/notation';
+import type { SlotName } from '../cube/analysis';
+import { SLOT_ROTATION } from '../solver/cfop';
 import { htm } from '../cube/notation';
 import { ALL_CASES, SETS_BY_PUZZLE, SET_LABEL, caseTitle, type AlgCase, type AlgSet } from '../algs/data';
-import { algMoves, algStyle, caseState, getCustomAlg, preferredAlg, setCustomAlg, styleAlgs, validateAlg } from '../algs/registry';
+import { algMoves, algStyle, caseState, rotationFree, getCustomAlg, preferredAlg, setCustomAlg, styleAlgs, validateAlg } from '../algs/registry';
 import { GridRenderer } from '../render/GridRenderer';
 import { CubeView } from '../render/CubeView';
 import { lookFor } from './looks';
@@ -214,7 +217,7 @@ export class AlgsView {
       );
       this.cardEls.set(c.id, card);
       this.gridEl.append(card);
-      cells.push({ el: view, base: caseState(c), moves: algMoves(c, alg), look: lookFor(c.set), view: c.set === 'F2L' ? ('side' as const) : ('top' as const), size: c.puzzle === 2 ? (2 as const) : (3 as const) });
+      cells.push({ el: view, base: caseState(c), moves: algMoves(c, alg), look: lookFor(c.set), view: ['F2L', 'WV', 'VLS'].includes(c.set) ? ('side' as const) : ('top' as const), size: c.puzzle === 2 ? (2 as const) : (3 as const) });
     }
     if (!cases.length) this.gridEl.append(h('div', { class: 'empty muted' }, 'Keine Fälle für diesen Filter.'));
     this.grid?.setCells(cells);
@@ -248,10 +251,37 @@ export class AlgsView {
     let view: CubeView | null = null;
     let restartTimer = 0;
 
+    // F2L (und WV/VLS): Fall in jedem der vier Slots ansehen – Alg wird ohne Rotation umbenannt
+    let slot: SlotName = 'FR';
+    const slotInfo = h('div', { class: 'muted small slot-note' });
+    const slotMoves = () => (slot === 'FR' ? algMoves(c, algText) : conjugateAlg(rotationFree(algText), SLOT_ROTATION[slot]));
+    const slotPicker = ['F2L', 'WV', 'VLS'].includes(c.set)
+      ? h(
+          'div',
+          { class: 'slot-picker' },
+          h('span', { class: 'muted small' }, 'Slot:'),
+          ...(['FL', 'FR', 'BL', 'BR'] as SlotName[]).map((sl) =>
+            h('button', {
+              class: `chip-btn small ${sl === slot ? 'active' : ''}`,
+              'data-slot': sl,
+              onclick: () => {
+                slot = sl;
+                slotPicker!.querySelectorAll('button').forEach((b) => b.classList.toggle('active', (b as HTMLElement).dataset.slot === sl));
+                load();
+              },
+            }, { FL: 'vorne links', FR: 'vorne rechts', BL: 'hinten links', BR: 'hinten rechts' }[sl]),
+          ),
+        )
+      : null;
     const load = () => {
       if (!view) return;
-      const moves = algMoves(c, algText);
-      view.player.load(caseState(c, algText), moves);
+      const moves = slotMoves();
+      const start = applyMoves(solvedState(), invertAlg(moves));
+      view.player.load(start, moves);
+      slotInfo.textContent =
+        slot === 'FR' || !slotPicker
+          ? ''
+          : `Ohne Drehen: ${formatAlg(moves)}  ·  mit Drehen: ${formatAlg(simplify([...SLOT_ROTATION[slot], ...parseAlg(algText)]))}`;
       view.player.tps = settings.gridTps;
       renderChips(moves);
       clear(diagram);
@@ -361,6 +391,8 @@ export class AlgsView {
           { class: 'detail-right' },
           diagram,
           h('div', { class: 'btn-row' }, favBtn, statusSel),
+          slotPicker,
+          slotInfo,
           h('h4', null, algStyle() === 'oh' && (c.set === 'OLL' || c.set === 'PLL') ? 'Algorithmen (OH)' : 'Algorithmen'),
           algList,
           h('h4', null, 'Eigener Alg'),

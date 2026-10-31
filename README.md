@@ -27,6 +27,21 @@ Läuft auf Desktop und Handy.
 
   Die Sammlung zeigt die 2×2-Kategorien OLL, PBL, CLL, EG-1, EG-2; im Trainer lassen sich beliebige
   Kategorien kombinieren (z. B. nur EG-1 + EG-2). Timer mit 2×2-Scrambles und eigener Session.
+- **Statistik**: Verlauf mit ao5, ao5/ao12/ao100. Mit Smartcube-Solves zusätzlich die Schwächen-Analyse:
+  Zeit pro Phase im Vergleich zu einem Sub-10-Profil, Pause vor jeder Phase (Erkennung/Lookahead),
+  Ausführungs-TPS, die langsamsten OLL- und PLL-Fälle (direkt zum Üben oder Drillen).
+- **Spaced Repetition** im Erkennungs-Trainer: Nochmal / Schwer / Gut / Leicht plant die nächste Wiederholung (SM-2).
+- **Alg-Drill**: Fall erscheint, du führst den Alg aus. Mit Smartcube stoppt die Zeit automatisch, sobald der Alg fertig ist;
+  die langsamsten Algs (nach TPS) kommen öfter dran.
+- **Fortgeschrittene Sets**: COLL (40), Winter Variation (27), VLS (162), ZBLL (472) – in der Sammlung, im Trainer und
+  einzeln im Solver zuschaltbar (WV/VLS beim letzten Paar, COLL/ZBLL bei orientierten Kanten).
+  F2L-Fälle lassen sich in allen vier Slots ansehen (mit und ohne Rotation).
+- **Battle** (Timer): Raum erstellen, Code oder Link an Kollegen schicken – alle lösen denselben Scramble,
+  Zeiten erscheinen live, Rangliste über alle Runden. Braucht den NAS-Server.
+- **Geräte-Sync** (⚙): Fortschritt, eigene Algs, Wiederholungen und Zeiten über einen Sync-Code zwischen iPhone,
+  iPad und Mac abgleichen. Braucht den NAS-Server.
+- **Wischgesten**: „🖐 Drehen“ im Solver – Schichten per Wischen auf den Stickern drehen, den Zustand danach lösen
+  lassen. Im Kreuz-Trainer lässt sich die Lösung so eingeben. **Neigung** (⚙): der Würfel folgt der Geräteneigung.
 - **Einstellungen (⚙)**: Hell/Dunkel/Auto, Einhand-Modus (Daumen-Layout links oder rechts), Alg-Set zweihändig oder OH
   (einhändige OLL/PLL-Algs), Leistungsanzeige.
 
@@ -47,6 +62,8 @@ denn gezeichnet wird nur, wenn sich etwas bewegt.
 ## Auf dem NAS mit Portainer
 
 Bei jedem Push baut GitHub Actions ein Docker-Image (amd64 + arm64) nach `ghcr.io/kranoxio/cfop-studio:latest`.
+Das Image enthält einen kleinen Node-Server ohne Abhängigkeiten (`server/server.mjs`), der die App ausliefert und die
+API für Battle und Sync bereitstellt.
 
 1. Portainer → **Stacks** → **Add stack** → Web editor:
 
@@ -58,7 +75,15 @@ Bei jedem Push baut GitHub Actions ein Docker-Image (amd64 + arm64) nach `ghcr.i
        restart: unless-stopped
        ports:
          - "8085:80"
+       volumes:
+         - cfop-data:/data
+
+   volumes:
+     cfop-data:
    ```
+
+   Das Volume `cfop-data` speichert die Sync-Profile, damit sie Updates überstehen.
+   Battle-Räume leben nur im Speicher (ein Neustart beendet laufende Räume).
 
 2. **Deploy the stack** → im Browser `http://<NAS-IP>:8085` öffnen.
 
@@ -76,6 +101,7 @@ Update: im Stack auf **Pull and redeploy** klicken.
 ```bash
 npm install
 npm run dev     # Entwicklungsserver
-npm test        # prüft alle 3×3-Algs (+ OH), 177 2×2-Algs, beide Solver, Splits und Wiedergabe
+npm test        # prüft alle Algs (3×3, OH, COLL/WV/VLS/ZBLL, 2×2), Solver, Analyse, Server und Wiedergabe
+node server/server.mjs   # Server lokal (PORT, STATIC_DIR, DATA_DIR per Umgebungsvariable)
 npm run build   # Produktions-Build nach dist/
 ```

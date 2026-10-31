@@ -87,3 +87,11 @@ export function solvedUpToAUF(s: State): boolean {
   }
   return true;
 }
+
+/** Kanten der letzten Ebene orientiert (Gelb oben auf allen U-Kanten) */
+export const U_EDGE_FACELETS = [1, 3, 5, 7];
+export const edgesOriented = (s: State) => faceletsSolved(s, U_EDGE_FACELETS);
+
+/** Ecken der letzten Ebene orientiert und permutiert (für COLL: danach bleibt nur EPLL) */
+export const LL_CORNER_FACELETS = [0, 2, 6, 8, 9, 11, 18, 20, 36, 38, 45, 47];
+export const llCornersSolved = (s: State) => faceletsSolved(s, LL_CORNER_FACELETS);

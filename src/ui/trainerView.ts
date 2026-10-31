@@ -3,6 +3,7 @@ import { clear, h } from './dom';
 import { RecogMode } from './trainer/recog';
 import { CrossMode } from './trainer/cross';
 import { LookaheadMode } from './trainer/lookahead';
+import { DrillMode } from './trainer/drill';
 import type { TrainerContext, TrainerMode } from './trainer/types';
 import { storage } from '../util/storage';
 import { settings } from '../settings';
@@ -18,7 +19,8 @@ export class TrainerView {
   private side = h('div', { class: 'trainer-side' });
   private modeTabs = h('div', { class: 'seg-tabs mode-tabs' });
   private recog = new RecogMode();
-  private modes: TrainerMode[] = [this.recog, new CrossMode(), new LookaheadMode()];
+  private drillMode = new DrillMode();
+  private modes: TrainerMode[] = [this.recog, this.drillMode, new CrossMode(), new LookaheadMode()];
   private mode: TrainerMode;
   private active = false;
 
@@ -45,7 +47,13 @@ export class TrainerView {
 
   /** Kreuz- und Lookahead-Trainer gibt es nur für den 3x3 */
   private available(m: TrainerMode) {
-    return settings.puzzle === 3 || m === this.recog;
+    return settings.puzzle === 3 || m === this.recog || m === this.drillMode;
+  }
+
+  /** Einen bestimmten Fall im Drill üben. */
+  drill(id: string) {
+    this.switchMode(this.drillMode);
+    this.drillMode.drill(id);
   }
 
   /** Einen bestimmten Fall im Erkennungs-Trainer zeigen. */
@@ -97,6 +105,7 @@ export class TrainerView {
     v.player.onIndex = null;
     v.player.onFinish = null;
     v.onFrame = null;
+    v.onSwipe = null;
     v.look = undefined;
     const ctx: TrainerContext = { view: v, hudTop: this.hudTop, hudBottom: this.hudBottom, actions: this.actions, side: this.side };
     this.mode.start(ctx);
